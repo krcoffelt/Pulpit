@@ -18,6 +18,7 @@ export class RateLimitError extends Error {
 
 export async function enforceRateLimit(ownerId: string, action: string, limit: number, windowMs: number) {
   if (!/^[a-zA-Z0-9_-]+$/.test(ownerId) || !/^[a-z0-9-]+$/.test(action)) throw new Error("The rate-limit key is invalid.");
+  if (process.env.NODE_ENV === "development" && process.env.CIRCUMVISION_ENFORCE_LOCAL_RATE_LIMITS !== "true") return;
   const now = Date.now();
   const bucket = Math.floor(now / windowMs);
   const key = `rate/${ownerId}/${action}/${bucket}.json`;

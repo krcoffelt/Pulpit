@@ -12,6 +12,8 @@
 
 The application denies project, media, processing, and export access unless the Netlify Identity JWT belongs to the project owner. Local development intentionally uses one isolated `local-user` account.
 
+Circumvision also rejects accounts that were not created by an Identity invitation (or explicitly assigned the `circumvision`/`admin` role), even if open signup is accidentally enabled in Netlify. For an additional one-user allowlist, set `CIRCUMVISION_ALLOWED_EMAILS` to Tyshone's email. Keep Netlify registration set to **Invite only** as the first line of defense.
+
 ## Media architecture
 
 - The browser sends 3 MB resumable sections, below Netlify's binary request ceiling.

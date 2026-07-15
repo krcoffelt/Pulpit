@@ -1,14 +1,10 @@
 import { NextResponse } from "next/server";
-import { getCircumvisionUser } from "@/lib/auth";
+import { getCircumvisionSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const user = await getCircumvisionUser();
-  return NextResponse.json({
-    authenticated: Boolean(user),
-    user,
-    local: user?.local ?? false,
-  });
+  const session = await getCircumvisionSession();
+  return NextResponse.json(session, { headers: { "Cache-Control": "private, no-store" } });
 }
