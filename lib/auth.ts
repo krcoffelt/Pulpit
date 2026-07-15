@@ -43,6 +43,10 @@ function configuredAllowedEmails(value = process.env.CIRCUMVISION_ALLOWED_EMAILS
   return new Set(value.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean));
 }
 
+function configuredOwnerEmails(value = process.env.CIRCUMVISION_OWNER_EMAILS || "") {
+  return new Set(value.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean));
+}
+
 const IDENTITY_SETTINGS_TTL_MS = 5 * 60 * 1000;
 let cachedInviteOnlySetting: { enabled: boolean; expiresAt: number } | null = null;
 
@@ -67,7 +71,10 @@ export function isAuthorizedIdentityUser(
   user: Pick<User, "email" | "confirmedAt" | "invitedAt" | "role" | "roles">,
   allowedEmails = configuredAllowedEmails(),
   inviteOnlyRegistration = false,
+  ownerEmails = configuredOwnerEmails(),
 ) {
+  const normalizedEmail = user.email?.toLowerCase();
+  if (normalizedEmail && ownerEmails.has(normalizedEmail)) return true;
   const hasWorkspaceAccess = Boolean(user.invitedAt)
     || user.role === "admin"
     || Boolean(user.roles?.some((role) => role === "admin" || role === "circumvision"))
@@ -75,7 +82,7 @@ export function isAuthorizedIdentityUser(
     // account is therefore an accepted invite while registration is disabled.
     || Boolean(inviteOnlyRegistration && user.confirmedAt && user.email);
   if (!hasWorkspaceAccess) return false;
-  return !allowedEmails.size || Boolean(user.email && allowedEmails.has(user.email.toLowerCase()));
+  return !allowedEmails.size || Boolean(normalizedEmail && allowedEmails.has(normalizedEmail));
 }
 
 export async function getCircumvisionSession(): Promise<CircumvisionSession> {
@@ -90,8 +97,11 @@ export async function getCircumvisionSession(): Promise<CircumvisionSession> {
 
   const identityUser = await getUser();
   if (!identityUser) return { authenticated: false, authorized: false, user: null, local: false };
-  const inviteOnlyRegistration = await isInviteOnlyRegistrationEnabled();
-  if (!isAuthorizedIdentityUser(identityUser, configuredAllowedEmails(), inviteOnlyRegistration)) {
+  const allowedEmails = configuredAllowedEmails();
+  const ownerEmails = configuredOwnerEmails();
+  const hasExplicitAccess = isAuthorizedIdentityUser(identityUser, allowedEmails, false, ownerEmails);
+  const inviteOnlyRegistration = hasExplicitAccess ? false : await isInviteOnlyRegistrationEnabled();
+  if (!hasExplicitAccess && !isAuthorizedIdentityUser(identityUser, allowedEmails, inviteOnlyRegistration, ownerEmails)) {
     return {
       authenticated: true,
       authorized: false,

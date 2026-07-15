@@ -30,6 +30,15 @@ describe("Circumvision identity authorization", () => {
     )).toBe(false);
   });
 
+  it("accepts an explicitly configured workspace owner", () => {
+    expect(isAuthorizedIdentityUser(
+      { email: "owner@example.com" },
+      new Set(),
+      false,
+      new Set(["owner@example.com"]),
+    )).toBe(true);
+  });
+
   it("applies the optional email allowlist after invitation checks", () => {
     const allowlist = new Set(["tyshone@example.com"]);
     expect(isAuthorizedIdentityUser({ email: "tyshone@example.com", invitedAt: "2026-07-15T00:00:00Z" }, allowlist)).toBe(true);
