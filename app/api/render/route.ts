@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Export clips must be between 0.5 and 60 seconds." }, { status: 400 });
     }
 
-    const output = await withTempUpload(file, "pulpit-render-", async ({ dir, sourcePath }) => {
+    const output = await withTempUpload(file, "circumvision-render-", async ({ dir, sourcePath }) => {
       return renderClip({
         sourcePath,
         outputPath: path.join(dir, "short.mp4"),
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     return new NextResponse(new Uint8Array(output), {
       headers: {
         "Content-Type": "video/mp4",
-        "Content-Disposition": 'attachment; filename="pulpit-short.mp4"',
+        "Content-Disposition": 'attachment; filename="circumvision-short.mp4"',
         "Cache-Control": "no-store",
       },
     });

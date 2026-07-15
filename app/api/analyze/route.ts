@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     }
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const result = await withTempUpload(file, "pulpit-analysis-", async ({ sourcePath }) => {
+    const result = await withTempUpload(file, "circumvision-analysis-", async ({ sourcePath }) => {
       const duration = await getDuration(sourcePath);
       const transcript = await transcribeSermon(sourcePath, openai);
       const clips = await findBestClips(transcript, openai);

@@ -1,6 +1,6 @@
-# Pulpit Studio
+# Circumvision
 
-Pulpit Studio is a local-first sermon clip editor built for Tyshon Rowland. Upload a full sermon, generate a speaker-aware transcript, surface the strongest short-form moments, format them for social platforms, burn in captions, and export finished MP4 files.
+Circumvision is a local-first sermon clip editor built for Tyshone Roland. Upload a full sermon, generate a speaker-aware transcript, surface the strongest short-form moments, format them for social platforms, burn in captions, and export finished MP4 files.
 
 ## What works
 

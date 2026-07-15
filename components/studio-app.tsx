@@ -138,9 +138,12 @@ function WelcomeView({
 
       <section className="welcome-main">
         <div className="welcome-copy">
-          <p className="eyebrow"><span>TYSHON ROWLAND</span><i /> SERMON CLIP EDITOR</p>
-          <h1>From full sermon<br />to finished <em>short.</em></h1>
-          <p className="welcome-subtitle">AI finds the moments worth sharing. You keep the message intact.</p>
+          <p className="eyebrow"><span>TYSHONE ROLAND</span><i /> SERMON CLIP EDITOR</p>
+          <h1>
+            <span className="headline-line">Trim the sermon.</span>
+            <span className="headline-line">Not the <em>spirit.</em></span>
+          </h1>
+          <p className="welcome-subtitle">Circumvision finds the moment, frames it right, and keeps the message intact.</p>
         </div>
 
         <div
@@ -150,6 +153,7 @@ function WelcomeView({
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
         >
+          <div className="drop-shader" aria-hidden="true" />
           <input
             ref={inputRef}
             type="file"
@@ -379,11 +383,13 @@ function Timeline({
   analysis,
   selectedClip,
   currentTime,
+  playing,
   onSeek,
 }: {
   analysis: AnalysisResult;
   selectedClip: ClipSuggestion;
   currentTime: number;
+  playing: boolean;
   onSeek: (time: number) => void;
 }) {
   const windowStart = Math.max(0, selectedClip.start - 12);
@@ -402,14 +408,14 @@ function Timeline({
   };
 
   return (
-    <section className="timeline">
+    <section className={`timeline ${playing ? "is-playing" : ""}`}>
       <div className="timeline-toolbar">
         <div><Scissors size={14} /><strong>{selectedClip.title}</strong><span>{formatTime(selectedClip.end - selectedClip.start, true)}</span></div>
         <div><button><RotateCcw size={13} /></button><button><Gauge size={13} /> 100%</button><button><ChevronDown size={13} /></button></div>
       </div>
       <div className="ruler">{ticks.map((tick) => <span key={tick} style={{ left: `${((tick - windowStart) / windowDuration) * 100}%` }}>{formatTime(tick, true)}</span>)}</div>
       <div className="timeline-track" onClick={seek}>
-        <div className="waveform">{waveform.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}</div>
+        <div className="waveform">{waveform.map((height, index) => <i key={index} style={{ height: `${height}%`, animationDelay: `${-(index % 12) * 0.07}s` }} />)}</div>
         <div className="clip-selection" style={{ left: `${selectionLeft}%`, width: `${selectionWidth}%` }}><i /><i /></div>
         <div className="playhead" style={{ left: `${playhead}%` }}><i /></div>
       </div>
@@ -609,7 +615,7 @@ function EditorView({
             </div>
 
             <div className="stage-wrap">
-              <div className={`video-stage aspect-${settings.aspect.replace(":", "-")} ${settings.frameMode === "fit" ? "smart-fit" : ""}`}>
+              <div className={`video-stage aspect-${settings.aspect.replace(":", "-")} ${settings.frameMode === "fit" ? "smart-fit" : ""} ${playing ? "is-playing" : ""}`}>
                 {videoUrl ? (
                   <>
                     {settings.frameMode === "fit" && <video className="blur-layer" src={videoUrl} muted aria-hidden="true" />}
@@ -633,12 +639,12 @@ function EditorView({
                 ) : (
                   <div className="demo-scene">
                     <div className="demo-light" /><div className="demo-window" /><div className="demo-figure"><i /><b /></div>
-                    <span className="demo-tag">TYSHON ROWLAND</span>
+                    <span className="demo-tag">TYSHONE ROLAND</span>
                   </div>
                 )}
                 <div className="stage-vignette" />
                 {settings.captionsEnabled && (
-                  <div className={`caption-overlay ${settings.captionPreset} ${settings.captionPosition}`} style={{ transform: `scale(${settings.captionScale})` }}>
+                  <div key={currentCaption?.id || selectedClip.id} className={`caption-overlay ${settings.captionPreset} ${settings.captionPosition}`} style={{ transform: `scale(${settings.captionScale})` }}>
                     <span>{captionWords.slice(0, splitAt).join(" ")} </span>
                     <mark className={settings.highlight ? "" : "plain"}>{captionWords.slice(splitAt).join(" ")}</mark>
                   </div>
@@ -665,7 +671,7 @@ function EditorView({
           />
         </div>
 
-        <Timeline analysis={analysis} selectedClip={selectedClip} currentTime={currentTime} onSeek={seek} />
+        <Timeline analysis={analysis} selectedClip={selectedClip} currentTime={currentTime} playing={playing} onSeek={seek} />
       </div>
       {toast && <div className="toast"><Check size={15} /> {toast}<button onClick={() => setToast("")}><X size={14} /></button></div>}
     </main>

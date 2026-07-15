@@ -1,6 +1,6 @@
 {
-  "name": "Pulpit Studio",
-  "short_name": "Pulpit",
+  "name": "Circumvision",
+  "short_name": "Circumvision",
   "description": "Turn full sermons into captioned, platform-ready short-form video.",
   "start_url": "/",
   "display": "standalone",

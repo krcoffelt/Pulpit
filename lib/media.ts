@@ -35,7 +35,7 @@ export async function getDuration(inputPath: string) {
 
 export async function transcribeSermon(inputPath: string, openai: OpenAI) {
   const binary = requireBinary(ffmpegPath, "FFmpeg");
-  const workDir = await mkdtemp(path.join(tmpdir(), "pulpit-audio-"));
+  const workDir = await mkdtemp(path.join(tmpdir(), "circumvision-audio-"));
 
   try {
     const chunkPattern = path.join(workDir, "chunk-%03d.mp3");

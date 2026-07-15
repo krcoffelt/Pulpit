@@ -3,9 +3,9 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"),
-  title: "Pulpit Studio — Sermon Clip Editor",
+  title: "Circumvision — Sermon Clip Editor",
   description: "Turn full sermons into captioned, platform-ready short-form video.",
-  applicationName: "Pulpit Studio",
+  applicationName: "Circumvision",
   manifest: "/site.webmanifest",
   icons: {
     icon: [
@@ -16,23 +16,23 @@ export const metadata: Metadata = {
     apple: [{ url: "/brand/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   openGraph: {
-    title: "Pulpit Studio",
+    title: "Circumvision",
     description: "Turn full sermons into captioned, platform-ready short-form video.",
     type: "website",
     images: [
       {
-        url: "/brand/pulpit-social-icon.png",
+        url: "/brand/circumvision-social-icon.png",
         width: 1200,
         height: 1200,
-        alt: "Pulpit Studio brand mark",
+        alt: "Circumvision scissors brand mark",
       },
     ],
   },
   twitter: {
     card: "summary",
-    title: "Pulpit Studio",
+    title: "Circumvision",
     description: "Turn full sermons into captioned, platform-ready short-form video.",
-    images: ["/brand/pulpit-social-icon.png"],
+    images: ["/brand/circumvision-social-icon.png"],
   },
 };
 
