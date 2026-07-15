@@ -1,8 +1,12 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+const metadataBase = process.env.NEXT_PUBLIC_APP_URL
+  || process.env.URL
+  || (process.env.NODE_ENV === "production" ? "https://circumvision.netlify.app" : "http://localhost:3000");
+
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"),
+  metadataBase: new URL(metadataBase),
   title: "Circumvision — Sermon Clip Editor",
   description: "Turn full sermons into captioned, platform-ready short-form video.",
   applicationName: "Circumvision",
