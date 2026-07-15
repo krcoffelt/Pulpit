@@ -38,63 +38,85 @@ export async function getDuration(inputPath: string) {
   return duration;
 }
 
-export async function transcribeSermon(inputPath: string, openai: OpenAI) {
+export interface AudioChunk {
+  path: string;
+  duration: number;
+  offset: number;
+}
+
+export async function extractAudioChunks(inputPath: string, workDir: string, segmentSeconds = 360) {
   const binary = requireBinary(ffmpegPath, "FFmpeg");
+  const chunkPattern = path.join(workDir, "chunk-%03d.mp3");
+  await run(binary, [
+    "-hide_banner", "-loglevel", "error", "-y",
+    "-i", inputPath,
+    "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k",
+    "-f", "segment", "-segment_time", String(segmentSeconds), "-reset_timestamps", "1",
+    chunkPattern,
+  ]);
+
+  const chunkNames = (await readdir(workDir)).filter((file) => file.endsWith(".mp3")).sort();
+  if (!chunkNames.length) throw new Error("No speech track was found in this file.");
+
+  const chunks: AudioChunk[] = [];
+  let offset = 0;
+  for (const chunkName of chunkNames) {
+    const chunkPath = path.join(workDir, chunkName);
+    const duration = await getDuration(chunkPath);
+    chunks.push({ path: chunkPath, duration, offset });
+    offset += duration;
+  }
+
+  return chunks;
+}
+
+export async function transcribeAudioChunk(chunk: AudioChunk, chunkIndex: number, openai: OpenAI) {
+  const transcript = await openai.audio.transcriptions.create({
+    file: createReadStream(chunk.path),
+    model: process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-transcribe-diarize",
+    response_format: "diarized_json",
+    chunking_strategy: "auto",
+  });
+
+  const response = transcript as unknown as {
+    text?: string;
+    segments?: Array<{ start: number; end: number; text: string; speaker?: string }>;
+  };
+
+  if (response.segments?.length) {
+    return response.segments.flatMap((segment, segmentIndex) => {
+      if (!segment.text.trim()) return [];
+      return [{
+        id: `s-${chunkIndex}-${segmentIndex}`,
+        start: chunk.offset + Number(segment.start),
+        end: chunk.offset + Number(segment.end),
+        text: segment.text.trim(),
+        speaker: segment.speaker || "Speaker",
+      } satisfies TranscriptSegment];
+    });
+  }
+
+  if (response.text?.trim()) {
+    return [{
+      id: `s-${chunkIndex}-0`,
+      start: chunk.offset,
+      end: chunk.offset + chunk.duration,
+      text: response.text.trim(),
+      speaker: "Speaker",
+    } satisfies TranscriptSegment];
+  }
+
+  return [];
+}
+
+export async function transcribeSermon(inputPath: string, openai: OpenAI) {
   const workDir = await mkdtemp(path.join(tmpdir(), "circumvision-audio-"));
 
   try {
-    const chunkPattern = path.join(workDir, "chunk-%03d.mp3");
-    await run(binary, [
-      "-hide_banner", "-loglevel", "error", "-y",
-      "-i", inputPath,
-      "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k",
-      "-f", "segment", "-segment_time", "600", "-reset_timestamps", "1",
-      chunkPattern,
-    ]);
-
-    const chunks = (await readdir(workDir)).filter((file) => file.endsWith(".mp3")).sort();
-    if (!chunks.length) throw new Error("No speech track was found in this file.");
-
+    const chunks = await extractAudioChunks(inputPath, workDir);
     const segments: TranscriptSegment[] = [];
-    let offset = 0;
-
-    for (const [chunkIndex, chunkName] of chunks.entries()) {
-      const chunkPath = path.join(workDir, chunkName);
-      const chunkDuration = await getDuration(chunkPath);
-      const transcript = await openai.audio.transcriptions.create({
-        file: createReadStream(chunkPath),
-        model: process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-transcribe-diarize",
-        response_format: "diarized_json",
-        chunking_strategy: "auto",
-      });
-
-      const response = transcript as unknown as {
-        text?: string;
-        segments?: Array<{ start: number; end: number; text: string; speaker?: string }>;
-      };
-
-      if (response.segments?.length) {
-        response.segments.forEach((segment, segmentIndex) => {
-          if (!segment.text.trim()) return;
-          segments.push({
-            id: `s-${chunkIndex}-${segmentIndex}`,
-            start: offset + Number(segment.start),
-            end: offset + Number(segment.end),
-            text: segment.text.trim(),
-            speaker: segment.speaker || "Speaker",
-          });
-        });
-      } else if (response.text?.trim()) {
-        segments.push({
-          id: `s-${chunkIndex}-0`,
-          start: offset,
-          end: offset + chunkDuration,
-          text: response.text.trim(),
-          speaker: "Speaker",
-        });
-      }
-
-      offset += chunkDuration;
+    for (const [chunkIndex, chunk] of chunks.entries()) {
+      segments.push(...await transcribeAudioChunk(chunk, chunkIndex, openai));
     }
 
     return segments;
@@ -304,9 +326,13 @@ export async function withTempUpload<T>(file: File, prefix: string, callback: (c
   const extension = path.extname(file.name) || ".mp4";
   const sourcePath = path.join(dir, `source${extension}`);
   try {
-    await file.stream().pipeTo(Writable.toWeb(createWriteStream(sourcePath)));
+    await saveUpload(file, sourcePath);
     return await callback({ dir, sourcePath });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+export async function saveUpload(file: File, outputPath: string) {
+  await file.stream().pipeTo(Writable.toWeb(createWriteStream(outputPath)));
 }

@@ -64,12 +64,25 @@ type ApiErrorPayload = {
   requestId?: string;
 };
 
+type AnalysisJobStartPayload = {
+  jobId: string;
+  title: string;
+  duration: number;
+  totalChunks: number;
+};
+
+type AnalysisChunkPayload = {
+  completedChunks: number;
+  totalChunks: number;
+  transcriptSegments: number;
+};
+
 async function readApiPayload<T extends object>(response: Response, action: string): Promise<T & ApiErrorPayload> {
   const body = await response.text();
   const status = response.status ? `HTTP ${response.status}` : "an unknown status";
 
   if (!body.trim()) {
-    throw new Error(`${action} failed with ${status}, but the server returned no details. Try again with a smaller file.`);
+    throw new Error(`${action} failed with ${status}, but the processor returned no details. Retry the analysis.`);
   }
 
   try {
@@ -79,7 +92,7 @@ async function readApiPayload<T extends object>(response: Response, action: stri
     }
     return payload as T & ApiErrorPayload;
   } catch {
-    throw new Error(`${action} failed with ${status}, and the server returned an unreadable response. Try again or restart the local server.`);
+    throw new Error(`${action} failed with ${status}, and the processor returned an unreadable response. Retry the analysis or restart the local server.`);
   }
 }
 
@@ -231,14 +244,13 @@ function WelcomeView({
   );
 }
 
-function AnalyzingView({ fileName, step }: { fileName: string; step: number }) {
+function AnalyzingView({ fileName, step, progress, activeDetail }: { fileName: string; step: number; progress: number; activeDetail: string }) {
   const steps = [
     { label: "Preparing media", detail: "Compressing the audio track" },
     { label: "Transcribing sermon", detail: "Identifying speakers and timing" },
     { label: "Finding the hooks", detail: "Ranking complete, shareable moments" },
     { label: "Building your workspace", detail: "Preparing captions and formats" },
   ];
-  const progress = Math.min(94, 12 + step * 24);
   return (
     <main className="analysis-screen">
       <header><BrandMark /><span>AI EDIT IN PROGRESS</span></header>
@@ -252,7 +264,7 @@ function AnalyzingView({ fileName, step }: { fileName: string; step: number }) {
           {steps.map((item, index) => (
             <div key={item.label} className={index < step ? "done" : index === step ? "active" : ""}>
               <span>{index < step ? <Check size={14} /> : index === step ? <LoaderCircle className="spin" size={14} /> : index + 1}</span>
-              <p><strong>{item.label}</strong><small>{item.detail}</small></p>
+              <p><strong>{item.label}</strong><small>{index === step && activeDetail ? activeDetail : item.detail}</small></p>
             </div>
           ))}
         </div>
@@ -712,18 +724,14 @@ export function StudioApp() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState("");
   const [analysisStep, setAnalysisStep] = useState(0);
+  const [analysisProgress, setAnalysisProgress] = useState(6);
+  const [analysisDetail, setAnalysisDetail] = useState("Uploading and compressing the sermon");
 
   useEffect(() => {
     return () => {
       if (videoUrl) URL.revokeObjectURL(videoUrl);
     };
   }, [videoUrl]);
-
-  useEffect(() => {
-    if (mode !== "analyzing") return;
-    const timer = window.setInterval(() => setAnalysisStep((step) => Math.min(3, step + 1)), 4200);
-    return () => window.clearInterval(timer);
-  }, [mode]);
 
   const chooseFile = async (selected: File) => {
     if (!selected.type.startsWith("video") && !selected.type.startsWith("audio")) {
@@ -752,24 +760,67 @@ export function StudioApp() {
   const analyze = async () => {
     if (!file) return;
     setAnalysisStep(0);
+    setAnalysisProgress(6);
+    setAnalysisDetail("Uploading and compressing the sermon");
     setMode("analyzing");
     setError("");
+    let activeJobId = "";
     try {
       const form = new FormData();
       form.append("file", file);
       form.append("title", title);
-      const response = await fetch("/api/analyze", { method: "POST", body: form });
-      const payload = await readApiPayload<AnalysisResult>(response, "Analysis");
-      if (!response.ok) {
-        const suffix = payload.requestId ? ` Reference: ${payload.requestId}.` : "";
-        throw new Error(`${payload.error || "The sermon could not be analyzed."}${suffix}`);
+      const startResponse = await fetch("/api/analyze/start", { method: "POST", body: form });
+      const startPayload = await readApiPayload<AnalysisJobStartPayload>(startResponse, "Preparing media");
+      if (!startResponse.ok) {
+        const suffix = startPayload.requestId ? ` Reference: ${startPayload.requestId}.` : "";
+        throw new Error(`${startPayload.error || "The sermon could not be prepared."}${suffix}`);
       }
+
+      activeJobId = startPayload.jobId;
+      setAnalysisStep(1);
+      setAnalysisProgress(16);
+
+      for (let chunkIndex = 0; chunkIndex < startPayload.totalChunks; chunkIndex += 1) {
+        setAnalysisDetail(`Transcribing section ${chunkIndex + 1} of ${startPayload.totalChunks}`);
+        const chunkResponse = await fetch("/api/analyze/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: activeJobId, chunkIndex }),
+        });
+        const chunkPayload = await readApiPayload<AnalysisChunkPayload>(chunkResponse, "Transcription");
+        if (!chunkResponse.ok) {
+          const suffix = chunkPayload.requestId ? ` Reference: ${chunkPayload.requestId}.` : "";
+          throw new Error(`${chunkPayload.error || "Part of the sermon could not be transcribed."}${suffix}`);
+        }
+        setAnalysisProgress(16 + Math.round((chunkPayload.completedChunks / chunkPayload.totalChunks) * 62));
+      }
+
+      setAnalysisStep(2);
+      setAnalysisProgress(84);
+      setAnalysisDetail("Ranking complete moments with strong hooks");
+      const finishResponse = await fetch("/api/analyze/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: activeJobId }),
+      });
+      const payload = await readApiPayload<AnalysisResult>(finishResponse, "Finding clips");
+      if (!finishResponse.ok) {
+        const suffix = payload.requestId ? ` Reference: ${payload.requestId}.` : "";
+        throw new Error(`${payload.error || "The strongest clips could not be selected."}${suffix}`);
+      }
+      activeJobId = "";
       if (!payload.clips?.length) throw new Error("The transcript completed, but no complete clip moments were found.");
+      setAnalysisStep(3);
+      setAnalysisProgress(100);
+      setAnalysisDetail("Preparing captions and editor controls");
       const url = URL.createObjectURL(file);
       setVideoUrl(url);
       setAnalysis(payload as AnalysisResult);
       setMode("editor");
     } catch (caught) {
+      if (activeJobId) {
+        await fetch(`/api/analyze/start?jobId=${encodeURIComponent(activeJobId)}`, { method: "DELETE" }).catch(() => undefined);
+      }
       setError(caught instanceof Error ? caught.message : "The sermon could not be analyzed.");
       setMode("ready");
     }
@@ -788,7 +839,7 @@ export function StudioApp() {
     clearFile();
   };
 
-  if (mode === "analyzing") return <AnalyzingView fileName={file?.name || "Sermon"} step={analysisStep} />;
+  if (mode === "analyzing") return <AnalyzingView fileName={file?.name || "Sermon"} step={analysisStep} progress={analysisProgress} activeDetail={analysisDetail} />;
   if (mode === "editor" && analysis) return <EditorView analysis={analysis} sourceFile={file} videoUrl={videoUrl} onBack={backToWelcome} />;
   return (
     <WelcomeView
