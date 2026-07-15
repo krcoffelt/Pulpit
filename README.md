@@ -9,6 +9,7 @@ Circumvision is Tyshone Roland's sermon-to-short-form production workspace. It k
 - Retriable 3 MB section uploads with exact progress, pause, resume, and validation
 - Durable project, source, transcript, edit, job, and export persistence
 - Background audio preparation, three-minute diarized transcript checkpoints, clip selection, and FFmpeg rendering
+- Worker-only ranged source streaming so large sermons are processed without copying the full upload to ephemeral disk
 - Transcript checkpoints and safe retries after refreshes or function restarts
 - Clip scoring for hook, impact, clarity, completeness, faithfulness, and shareability
 - Duplicate/overlap removal and editable 15, 30, 45, or 60 second moments
@@ -42,7 +43,7 @@ npm run test:e2e
 npm run verify
 ```
 
-The render integration test produces and probes real H.264/AAC output for all ratios and audio-only input. Browser tests cover desktop/mobile layout, persisted section uploads, pause/resume state, health responses, mutation-origin protection, and readable API failures.
+The render integration test produces and probes real H.264/AAC output for all ratios and audio-only input. Media tests verify authenticated HTTP range probing and extraction without full-file staging. Browser tests cover desktop/mobile layout, persisted section uploads, pause/resume state, health responses, mutation-origin protection, and readable API failures.
 
 ## Production
 

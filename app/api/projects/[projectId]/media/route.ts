@@ -4,12 +4,38 @@ import { getJobBytes } from "@/lib/job-storage";
 import { projectSourcePartKey, requireProject } from "@/lib/projects";
 import { UPLOAD_PART_BYTES } from "@/lib/upload";
 import { PublicError } from "@/lib/public-error";
+import { requireProcessJob } from "@/lib/process-jobs";
+import { EXPORT_ID_PATTERN, requireRenderJob } from "@/lib/render-jobs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 type RouteContext = { params: Promise<{ projectId: string }> };
+const WORKER_TOKEN_PATTERN = /^[a-f0-9]{64}$/;
+
+async function mediaOwnerId(request: Request, projectId: string) {
+  const processToken = request.headers.get("x-circumvision-process-token");
+  const renderToken = request.headers.get("x-circumvision-render-token");
+  const exportId = request.headers.get("x-circumvision-export-id");
+  const hasWorkerCredentials = Boolean(processToken || renderToken || exportId);
+
+  if (hasWorkerCredentials) {
+    try {
+      if (processToken && !renderToken && !exportId && WORKER_TOKEN_PATTERN.test(processToken)) {
+        return (await requireProcessJob(projectId, processToken)).ownerId;
+      }
+      if (renderToken && exportId && !processToken && WORKER_TOKEN_PATTERN.test(renderToken) && EXPORT_ID_PATTERN.test(exportId)) {
+        return (await requireRenderJob(projectId, exportId, renderToken)).ownerId;
+      }
+    } catch {
+      // Return one consistent response without revealing whether a project or worker token exists.
+    }
+    throw new PublicError("Media access was denied.", 403);
+  }
+
+  return (await requireCircumvisionUser()).id;
+}
 
 function parseRange(value: string | null, fileSize: number) {
   if (!value) return { start: 0, end: Math.min(fileSize - 1, UPLOAD_PART_BYTES - 1) };
@@ -24,9 +50,9 @@ function parseRange(value: string | null, fileSize: number) {
 export async function GET(request: Request, context: RouteContext) {
   const requestId = createRequestId();
   try {
-    const user = await requireCircumvisionUser();
     const { projectId } = await context.params;
-    const project = await requireProject(user.id, projectId);
+    const ownerId = await mediaOwnerId(request, projectId);
+    const project = await requireProject(ownerId, projectId);
     const range = parseRange(request.headers.get("range"), project.source.fileSize);
     if (!range) {
       return new Response(null, {

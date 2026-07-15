@@ -17,7 +17,7 @@ This flow prioritizes convenience over identity verification. Anyone who can rea
 - Project records, original source sections, transcript checkpoints, editor state, and exports are persisted in Netlify Blobs with strong consistency.
 - Production analysis and rendering run in token-protected Netlify background functions rather than a browser-held request.
 - Each transcript section is checkpointed. If a background function stops, reopening a stale/failed project retries from the first unfinished section.
-- Rendering assembles the retained source inside the background function. Exporting another ratio never asks for the source again.
+- Processing and rendering stream authenticated byte ranges from the retained source directly into FFprobe/FFmpeg. Large videos do not consume the function's temporary disk, and exporting another ratio never asks for the source again.
 - Finished files are downloaded through session-gated 3 MB byte ranges, avoiding response-size ceilings.
 - Production data uses the `circumvision` Blob store. Branch/deploy previews use isolated stores and cannot mutate production sermons.
 

@@ -4,6 +4,7 @@ import { logEvent } from "./log";
 import { requireProcessJob, saveProcessJob } from "./process-jobs";
 import { DEFAULT_RENDER_SETTINGS, requireProject, updateProject } from "./projects";
 import { PublicError, safeErrorMessage } from "./public-error";
+import { processWorkerMediaSource } from "./worker-media";
 
 class ProcessCancelledError extends Error {
   constructor() {
@@ -38,6 +39,7 @@ export async function runProcessJob(input: { projectId: string; token: string })
       fileName: project.source.fileName,
       fileSize: project.source.fileSize,
       totalChunks: project.source.totalParts,
+      remoteSource: processWorkerMediaSource(project.id, input.token) || undefined,
     });
     await assertProcessActive(job.ownerId, job.projectId);
     await updateProject(job.ownerId, job.projectId, {

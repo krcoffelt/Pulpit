@@ -7,6 +7,7 @@ import { projectSourcePartKey, requireProject } from "./projects";
 import { exportMediaKey, readRenderJob, requireRenderJob, saveRenderJob, updateProjectExport } from "./render-jobs";
 import { safeErrorMessage } from "./public-error";
 import { logEvent } from "./log";
+import { renderWorkerMediaSource } from "./worker-media";
 
 async function assembleSource(projectId: string, totalParts: number, fileSize: number, outputPath: string) {
   const output = await open(outputPath, "w");
@@ -40,10 +41,14 @@ export async function runRenderJob(input: { projectId: string; exportId: string;
   const sourcePath = path.join(directory, `source${safeExtension}`);
   const outputPath = path.join(directory, "short.mp4");
   try {
-    await assembleSource(project.id, project.source.totalParts, project.source.fileSize, sourcePath);
+    const remoteSource = renderWorkerMediaSource(project.id, job.id, input.token);
+    if (!remoteSource) await assembleSource(project.id, project.source.totalParts, project.source.fileSize, sourcePath);
+    const mediaInput = remoteSource?.url || sourcePath;
+    const mediaHeaders = remoteSource?.headers;
     if ((await readRenderJob(job.projectId, job.id))?.status === "cancelled") return;
     const rendered = await renderClip({
-      sourcePath,
+      sourcePath: mediaInput,
+      sourceHeaders: mediaHeaders,
       outputPath,
       subtitlePath: path.join(directory, "captions.ass"),
       start: job.clip.start,
@@ -51,7 +56,7 @@ export async function runRenderJob(input: { projectId: string; exportId: string;
       transcript: job.transcript,
       fallbackCaptionText: job.clip.hook || job.clip.title,
       ...job.settings,
-      audioOnly: !(await hasVideoStream(sourcePath)),
+      audioOnly: !(await hasVideoStream(mediaInput, mediaHeaders)),
     });
     logEvent("info", "render.captions_verified", {
       projectId: job.projectId,

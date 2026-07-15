@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import OpenAI from "openai";
 import { extractAudioChunks, getDuration, transcribeAudioChunk } from "./media";
+import type { WorkerMediaSource } from "./worker-media";
 import { findBestClips } from "./clip-selection";
 import {
   getJobBytes,
@@ -42,6 +43,7 @@ interface UploadedJobInput {
   fileName: string;
   fileSize: number;
   totalChunks: number;
+  remoteSource?: WorkerMediaSource;
 }
 
 function manifestKey(jobId: string) {
@@ -101,9 +103,11 @@ export async function createAnalysisJobFromUpload(input: UploadedJobInput) {
   const sourcePath = path.join(directory, `source${extension}`);
 
   try {
-    await assembleUpload(input, sourcePath);
-    const duration = await getDuration(sourcePath);
-    const chunks = await extractAudioChunks(sourcePath, directory);
+    if (!input.remoteSource) await assembleUpload(input, sourcePath);
+    const mediaInput = input.remoteSource?.url || sourcePath;
+    const mediaHeaders = input.remoteSource?.headers;
+    const duration = await getDuration(mediaInput, mediaHeaders);
+    const chunks = await extractAudioChunks(mediaInput, directory, 180, mediaHeaders);
 
     const storedChunks: StoredChunk[] = [];
     for (const chunk of chunks) {

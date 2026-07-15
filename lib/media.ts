@@ -14,22 +14,45 @@ const execFileAsync = promisify(execFile);
 const captionFontPath = path.join(process.cwd(), "node_modules", "next", "dist", "compiled", "@vercel", "og", "Geist-Regular.ttf");
 const captionFontDirectory = path.dirname(captionFontPath);
 
+export type MediaInputHeaders = Record<string, string>;
+
 function requireBinary(binary: string | null | undefined, name: string) {
   if (!binary) throw new Error(`${name} binary is unavailable on this platform.`);
   return binary;
 }
 
-async function run(binary: string, args: string[]) {
-  return execFileAsync(binary, args, {
-    maxBuffer: 20 * 1024 * 1024,
-    timeout: 10 * 60 * 1000,
-    killSignal: "SIGKILL",
+function inputHeaderArgs(headers?: MediaInputHeaders) {
+  if (!headers || !Object.keys(headers).length) return [];
+  const lines = Object.entries(headers).map(([name, value]) => {
+    if (!/^[A-Za-z0-9-]+$/.test(name) || /[\r\n]/.test(value)) throw new Error("The media request headers are invalid.");
+    return `${name}: ${value}`;
   });
+  return ["-headers", `${lines.join("\r\n")}\r\n`];
 }
 
-export async function getDuration(inputPath: string) {
+async function run(binary: string, args: string[]) {
+  try {
+    return await execFileAsync(binary, args, {
+      maxBuffer: 20 * 1024 * 1024,
+      timeout: 10 * 60 * 1000,
+      killSignal: "SIGKILL",
+    });
+  } catch (error) {
+    const stderr = error && typeof error === "object" && "stderr" in error && typeof error.stderr === "string"
+      ? error.stderr.trim().replace(/https?:\/\/\S+/g, "[media source]").slice(-1800)
+      : "";
+    const failure = new Error(stderr ? `Media processing failed: ${stderr}` : "Media processing failed before FFmpeg returned details.");
+    if (error && typeof error === "object" && "code" in error && typeof error.code === "string") {
+      (failure as Error & { code?: string }).code = error.code;
+    }
+    throw failure;
+  }
+}
+
+export async function getDuration(inputPath: string, inputHeaders?: MediaInputHeaders) {
   const binary = requireBinary(ffprobeStatic.path, "FFprobe");
   const { stdout } = await run(binary, [
+    ...inputHeaderArgs(inputHeaders),
     "-v", "error",
     "-show_entries", "format=duration",
     "-of", "default=noprint_wrappers=1:nokey=1",
@@ -40,9 +63,10 @@ export async function getDuration(inputPath: string) {
   return duration;
 }
 
-export async function hasVideoStream(inputPath: string) {
+export async function hasVideoStream(inputPath: string, inputHeaders?: MediaInputHeaders) {
   const binary = requireBinary(ffprobeStatic.path, "FFprobe");
   const { stdout } = await run(binary, [
+    ...inputHeaderArgs(inputHeaders),
     "-v", "error",
     "-select_streams", "v:0",
     "-show_entries", "stream=codec_type",
@@ -85,11 +109,12 @@ export function splitTimedTranscriptSegment(segment: TranscriptSegment, maxWords
   });
 }
 
-export async function extractAudioChunks(inputPath: string, workDir: string, segmentSeconds = 180) {
+export async function extractAudioChunks(inputPath: string, workDir: string, segmentSeconds = 180, inputHeaders?: MediaInputHeaders) {
   const binary = requireBinary(ffmpegPath, "FFmpeg");
   const chunkPattern = path.join(workDir, "chunk-%03d.mp3");
   await run(binary, [
     "-hide_banner", "-loglevel", "error", "-y",
+    ...inputHeaderArgs(inputHeaders),
     "-i", inputPath,
     "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k",
     "-f", "segment", "-segment_time", String(segmentSeconds), "-reset_timestamps", "1",
@@ -192,6 +217,7 @@ function captionLines(text: string, preset: CaptionPreset, highlight: boolean, w
 
 interface RenderClipOptions {
   sourcePath: string;
+  sourceHeaders?: MediaInputHeaders;
   outputPath: string;
   subtitlePath: string;
   start: number;
@@ -272,7 +298,7 @@ export async function renderClip(options: RenderClipOptions) {
 
   const { stderr } = await run(binary, [
     "-hide_banner", "-nostats", "-loglevel", options.captionsEnabled ? "info" : "error", "-y",
-    "-ss", String(options.start), "-i", options.sourcePath,
+    "-ss", String(options.start), ...inputHeaderArgs(options.sourceHeaders), "-i", options.sourcePath,
     "-t", String(Math.max(0.5, options.end - options.start)),
     "-filter_complex", filter,
     "-map", "[v]", "-map", "0:a?",
