@@ -1,4 +1,4 @@
-import { getUser, type User } from "@netlify/identity";
+import { getSettings, getUser, type User } from "@netlify/identity";
 
 export interface CircumvisionUser {
   id: string;
@@ -43,16 +43,39 @@ function configuredAllowedEmails(value = process.env.CIRCUMVISION_ALLOWED_EMAILS
   return new Set(value.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean));
 }
 
+const IDENTITY_SETTINGS_TTL_MS = 5 * 60 * 1000;
+let cachedInviteOnlySetting: { enabled: boolean; expiresAt: number } | null = null;
+
+async function isInviteOnlyRegistrationEnabled() {
+  if (cachedInviteOnlySetting && cachedInviteOnlySetting.expiresAt > Date.now()) {
+    return cachedInviteOnlySetting.enabled;
+  }
+  try {
+    const settings = await getSettings();
+    cachedInviteOnlySetting = {
+      enabled: settings.disableSignup,
+      expiresAt: Date.now() + IDENTITY_SETTINGS_TTL_MS,
+    };
+    return settings.disableSignup;
+  } catch {
+    // Fail closed when the Identity policy cannot be verified.
+    return false;
+  }
+}
+
 export function isAuthorizedIdentityUser(
-  user: Pick<User, "email" | "invitedAt" | "role" | "roles">,
+  user: Pick<User, "email" | "confirmedAt" | "invitedAt" | "role" | "roles">,
   allowedEmails = configuredAllowedEmails(),
+  inviteOnlyRegistration = false,
 ) {
-  const wasInvited = Boolean(user.invitedAt)
+  const hasWorkspaceAccess = Boolean(user.invitedAt)
     || user.role === "admin"
-    || Boolean(user.roles?.some((role) => role === "admin" || role === "circumvision"));
-  if (!wasInvited) return false;
-  if (!allowedEmails.size) return true;
-  return Boolean(user.email && allowedEmails.has(user.email.toLowerCase()));
+    || Boolean(user.roles?.some((role) => role === "admin" || role === "circumvision"))
+    // Netlify clears the pending-invite state after acceptance. A confirmed
+    // account is therefore an accepted invite while registration is disabled.
+    || Boolean(inviteOnlyRegistration && user.confirmedAt && user.email);
+  if (!hasWorkspaceAccess) return false;
+  return !allowedEmails.size || Boolean(user.email && allowedEmails.has(user.email.toLowerCase()));
 }
 
 export async function getCircumvisionSession(): Promise<CircumvisionSession> {
@@ -67,7 +90,8 @@ export async function getCircumvisionSession(): Promise<CircumvisionSession> {
 
   const identityUser = await getUser();
   if (!identityUser) return { authenticated: false, authorized: false, user: null, local: false };
-  if (!isAuthorizedIdentityUser(identityUser)) {
+  const inviteOnlyRegistration = await isInviteOnlyRegistrationEnabled();
+  if (!isAuthorizedIdentityUser(identityUser, configuredAllowedEmails(), inviteOnlyRegistration)) {
     return {
       authenticated: true,
       authorized: false,
