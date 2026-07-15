@@ -98,4 +98,39 @@ describe("durable render pipeline", () => {
       await deleteProject(ownerId, project.id);
     }
   });
+
+  it("burns the preview hook into the MP4 when no transcript segment overlaps the clip", async () => {
+    const project = await createStoredProject("fixture.mp4", "video/mp4", videoBytes);
+    const clip = { id: "clip-fallback", title: "Fallback Caption", start: 0.2, end: 1, hook: "Faith keeps moving", score: 90, reason: "Complete", platform: "Reels" };
+    const transcript = [{ id: "outside-clip", start: 5, end: 6, text: "This segment is outside the selected clip", speaker: "Tyshone" }];
+
+    const renderFrameHash = async (captionsEnabled: boolean) => {
+      const { job } = await createRenderJob({
+        ownerId,
+        projectId: project.id,
+        clip,
+        transcript,
+        settings: { ...settings("1:1"), captionsEnabled, frameMode: "fill" },
+      });
+      await runRenderJob({ projectId: project.id, exportId: job.id, token: job.token });
+      const output = await getJobBytes(exportMediaKey(project.id, job.id));
+      const outputPath = path.join(directory, `${job.id}.mp4`);
+      await writeFile(outputPath, output!);
+      const { stdout } = await execFileAsync(ffmpegPath!, [
+        "-hide_banner", "-loglevel", "error", "-ss", "0.3", "-i", outputPath,
+        "-frames:v", "1", "-f", "md5", "-",
+      ]);
+      return stdout.trim();
+    };
+
+    try {
+      const [captionedFrame, plainFrame] = await Promise.all([
+        renderFrameHash(true),
+        renderFrameHash(false),
+      ]);
+      expect(captionedFrame).not.toBe(plainFrame);
+    } finally {
+      await deleteProject(ownerId, project.id);
+    }
+  });
 });

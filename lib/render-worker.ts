@@ -48,6 +48,7 @@ export async function runRenderJob(input: { projectId: string; exportId: string;
       start: job.clip.start,
       end: job.clip.end,
       transcript: job.transcript,
+      fallbackCaptionText: job.clip.hook || job.clip.title,
       ...job.settings,
       audioOnly: !(await hasVideoStream(sourcePath)),
     });

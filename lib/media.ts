@@ -204,6 +204,7 @@ interface RenderClipOptions {
   frameX: number;
   frameY: number;
   transcript: TranscriptSegment[];
+  fallbackCaptionText?: string;
   audioOnly?: boolean;
 }
 
@@ -241,9 +242,12 @@ export async function renderClip(options: RenderClipOptions) {
         cues.push(`Dialogue: 0,${assTimestamp(start)},${assTimestamp(end)},Caption,,0,0,0,,${captionLines(cueText, options.captionPreset, options.highlight)}`);
       }
       return cues;
-    })
-    .join("\n");
-  await writeFile(options.subtitlePath, header + events, "utf8");
+    });
+  const fallbackCaption = options.fallbackCaptionText?.trim();
+  if (options.captionsEnabled && !events.length && fallbackCaption) {
+    events.push(`Dialogue: 0,${assTimestamp(0)},${assTimestamp(Math.max(0.5, options.end - options.start))},Caption,,0,0,0,,${captionLines(fallbackCaption, options.captionPreset, options.highlight)}`);
+  }
+  await writeFile(options.subtitlePath, header + events.join("\n"), "utf8");
 
   const escapedSubtitles = options.subtitlePath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
   const captionFilter = options.captionsEnabled ? `,ass='${escapedSubtitles}'` : "";
