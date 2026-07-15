@@ -398,11 +398,18 @@ function SignInView() {
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    if (!/^#(confirmation_token|recovery_token|invite_token|email_change_token|access_token)=/.test(window.location.hash)) return;
-    void import("@netlify/identity").then(async ({ handleAuthCallback }) => {
+    let active = true;
+    let processing = false;
+    const hasAuthCallback = () => /^#(confirmation_token|recovery_token|invite_token|email_change_token|access_token)=/.test(window.location.hash);
+    const processAuthCallback = async () => {
+      if (!hasAuthCallback() || processing) return;
+      processing = true;
       setFlow("processing");
       try {
+        const { handleAuthCallback } = await import("@netlify/identity");
+        if (!active) return;
         const result = await handleAuthCallback();
+        if (!active) return;
         if (result?.type === "invite" && result.token) {
           setInviteToken(result.token);
           setFlow("invite-password");
@@ -414,10 +421,19 @@ function SignInView() {
         }
         window.location.replace("/");
       } catch (caught) {
+        if (!active) return;
         setError(caught instanceof Error ? caught.message : "The sign-in link could not be completed.");
         setFlow("login");
+        processing = false;
       }
-    });
+    };
+    const onHashChange = () => { void processAuthCallback(); };
+    void processAuthCallback();
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      active = false;
+      window.removeEventListener("hashchange", onHashChange);
+    };
   }, []);
 
   const signIn = async (event: React.FormEvent) => {
