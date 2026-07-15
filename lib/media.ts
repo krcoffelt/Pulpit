@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { createReadStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
@@ -17,7 +18,11 @@ function requireBinary(binary: string | null | undefined, name: string) {
 }
 
 async function run(binary: string, args: string[]) {
-  return execFileAsync(binary, args, { maxBuffer: 20 * 1024 * 1024 });
+  return execFileAsync(binary, args, {
+    maxBuffer: 20 * 1024 * 1024,
+    timeout: 10 * 60 * 1000,
+    killSignal: "SIGKILL",
+  });
 }
 
 export async function getDuration(inputPath: string) {
@@ -299,7 +304,7 @@ export async function withTempUpload<T>(file: File, prefix: string, callback: (c
   const extension = path.extname(file.name) || ".mp4";
   const sourcePath = path.join(dir, `source${extension}`);
   try {
-    await writeFile(sourcePath, Buffer.from(await file.arrayBuffer()));
+    await file.stream().pipeTo(Writable.toWeb(createWriteStream(sourcePath)));
     return await callback({ dir, sourcePath });
   } finally {
     await rm(dir, { recursive: true, force: true });

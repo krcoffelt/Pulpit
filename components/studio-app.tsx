@@ -59,6 +59,30 @@ const DEFAULT_SETTINGS: RenderSettings = {
   frameMode: "fill",
 };
 
+type ApiErrorPayload = {
+  error?: string;
+  requestId?: string;
+};
+
+async function readApiPayload<T extends object>(response: Response, action: string): Promise<T & ApiErrorPayload> {
+  const body = await response.text();
+  const status = response.status ? `HTTP ${response.status}` : "an unknown status";
+
+  if (!body.trim()) {
+    throw new Error(`${action} failed with ${status}, but the server returned no details. Try again with a smaller file.`);
+  }
+
+  try {
+    const payload = JSON.parse(body) as unknown;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("The response was not a JSON object.");
+    }
+    return payload as T & ApiErrorPayload;
+  } catch {
+    throw new Error(`${action} failed with ${status}, and the server returned an unreadable response. Try again or restart the local server.`);
+  }
+}
+
 function formatTime(totalSeconds: number, compact = false) {
   const safe = Math.max(0, totalSeconds || 0);
   const hours = Math.floor(safe / 3600);
@@ -546,8 +570,9 @@ function EditorView({
       form.append("settings", JSON.stringify(settings));
       const response = await fetch("/api/render", { method: "POST", body: form });
       if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || "The render did not finish.");
+        const payload = await readApiPayload<ApiErrorPayload>(response, "Export");
+        const suffix = payload.requestId ? ` Reference: ${payload.requestId}.` : "";
+        throw new Error(`${payload.error || "The render did not finish."}${suffix}`);
       }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -734,8 +759,11 @@ export function StudioApp() {
       form.append("file", file);
       form.append("title", title);
       const response = await fetch("/api/analyze", { method: "POST", body: form });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "The sermon could not be analyzed.");
+      const payload = await readApiPayload<AnalysisResult>(response, "Analysis");
+      if (!response.ok) {
+        const suffix = payload.requestId ? ` Reference: ${payload.requestId}.` : "";
+        throw new Error(`${payload.error || "The sermon could not be analyzed."}${suffix}`);
+      }
       if (!payload.clips?.length) throw new Error("The transcript completed, but no complete clip moments were found.");
       const url = URL.createObjectURL(file);
       setVideoUrl(url);
