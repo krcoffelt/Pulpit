@@ -1,74 +1,51 @@
 # Circumvision
 
-Circumvision is a local-first sermon clip editor built for Tyshone Roland. Upload a full sermon, generate a speaker-aware transcript, surface the strongest short-form moments, format them for social platforms, burn in captions, and export finished MP4 files.
+Circumvision is Tyshone Roland's private sermon-to-short-form production workspace. It keeps the original sermon, creates a speaker-aware transcript, finds strong faithful moments, lets the editor correct copy and framing, and renders downloadable social MP4s.
 
-## What works
+## Production workflow
 
-- Video and audio ingest for MP4, MOV, WebM, MP3, M4A, and WAV files
-- Hosting-safe multipart uploads that keep large videos below serverless request limits
-- Automatic audio extraction and compression with bundled FFmpeg
-- Long-sermon chunking before transcription
-- Speaker-aware, timestamped transcription with OpenAI
-- AI-ranked clip suggestions with editable start and end times
-- 9:16 YouTube Shorts / Reels exports at 1080×1920
-- 4:5 Instagram feed exports at 1080×1350
-- 1:1 square exports at 1080×1080
-- Fill-crop and full-frame blurred-background modes
-- Bold, clean, and minimal burned-in caption styles
-- Responsive editor with a built-in sample project
+- Invite-only authentication and owner-scoped project/media access
+- MP4, MOV, WebM, MP3, M4A, and WAV ingest up to 2 GB
+- Retriable 3 MB section uploads with exact progress, pause, resume, and validation
+- Durable project, source, transcript, edit, job, and export persistence
+- Background audio preparation, three-minute diarized transcript checkpoints, clip selection, and FFmpeg rendering
+- Transcript checkpoints and safe retries after refreshes or function restarts
+- Clip scoring for hook, impact, clarity, completeness, faithfulness, and shareability
+- Duplicate/overlap removal and editable 15, 30, 45, or 60 second moments
+- Transcript correction, clip-boundary editing, manual clips, and suggestion regeneration without retranscription
+- Manual framing plus crop-fill or blurred full-frame output
+- Editable caption style, size, position, highlight, and enable/disable controls
+- H.264/AAC exports for 9:16 (1080×1920), 4:5 (1080×1350), and 1:1 (1080×1080)
+- Authenticated range downloads that stay within serverless response limits
+- Project dashboard, autosave, return-later workflow, quota/rate limits, cancellation, cleanup, health checks, and structured logs
 
-## Run it
+## Local development
 
-Requirements: Node.js 20+ and an OpenAI API key. FFmpeg and FFprobe ship with the npm dependencies; no system media tools are required.
+Requirements: Node.js 20+ and an OpenAI API key. Bundled FFmpeg and FFprobe binaries are used; no system media installation is required.
 
 ```bash
 npm install
 cp .env.example .env.local
-```
-
-Add your key to `.env.local`:
-
-```bash
-OPENAI_API_KEY=your_key_here
-```
-
-Then start the app:
-
-```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Click “Explore with a sample sermon” to inspect the editor without a key or source video.
+Add `OPENAI_API_KEY` to `.env.local`, then open [http://localhost:3000](http://localhost:3000). Local development uses an isolated `local-user` workspace so Netlify Identity is not required. The sample sermon opens the editor without invoking AI.
 
-## Workflow
-
-1. Drop in a sermon video or audio file and name the project.
-2. Choose **Analyze sermon**. The browser uploads the source in resumable 3 MB sections, then the server extracts a compact mono audio track and splits long recordings into six-minute sections.
-3. Each audio section is transcribed in its own timeout-safe request while the interface reports real progress.
-4. The clip analyst selects up to six complete moments, favoring a strong opening hook and a clear landing.
-5. Pick a moment and adjust the ratio, framing, caption treatment, timing, and transcript range.
-6. Choose **Export clip**. The source is rendered into a platform-ready H.264/AAC MP4 with captions burned in.
-
-## Configuration
-
-```bash
-OPENAI_API_KEY=
-OPENAI_TRANSCRIPTION_MODEL=gpt-4o-transcribe-diarize
-OPENAI_ANALYSIS_MODEL=gpt-5.6-luna
-```
-
-The defaults favor accurate speaker timing for transcription and a cost-conscious reasoning model for clip selection.
-
-## Verification
+## Commands
 
 ```bash
 npm run typecheck
 npm run lint
+npm run test
 npm run build
+npm run test:e2e
+npm run verify
 ```
 
-## Production note
+The render integration test produces and probes real H.264/AAC output for all ratios and audio-only input. Browser tests cover desktop/mobile layout, persisted section uploads, pause/resume state, health responses, mutation-origin protection, and readable API failures.
 
-In local development, job data uses an isolated temporary directory. On Netlify, upload parts, audio sections, and manifests use site-scoped Netlify Blobs so separate function invocations share the same job. Source upload parts are removed after audio extraction, audio sections are removed after transcription, and completed, cancelled, or 24-hour-old jobs are cleaned up automatically.
+## Production
 
-Before opening the app to multiple users, add authentication, per-user project records, upload quotas, rate limiting, and a durable background queue for very long media jobs. OpenAI keys must remain server-side and must never be added to browser code or committed to git.
+Deployment uses Next.js on Netlify, Netlify Blobs, invite-only Netlify Identity, and token-protected background functions. Source media is retained so rerenders never require another upload. Preview deploys use isolated Blob stores.
+
+See [PRODUCTION.md](./PRODUCTION.md) for Identity setup, environment variables, architecture, cleanup, security notes, and the release smoke-test checklist.

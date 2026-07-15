@@ -6,29 +6,25 @@ import {
   ArrowLeft,
   Captions,
   Check,
-  ChevronDown,
   Clock3,
   Download,
   Film,
   FolderOpen,
   Frame,
-  Gauge,
-  History,
   Home,
   Info,
   LayoutTemplate,
   LoaderCircle,
+  LogOut,
   Maximize2,
-  MoreHorizontal,
   Pause,
   Play,
   Plus,
   RotateCcw,
   Scissors,
-  Search,
-  Settings,
   Sparkles,
   Subtitles,
+  Trash2,
   Upload,
   WandSparkles,
   X,
@@ -43,11 +39,16 @@ import type {
   CaptionPosition,
   CaptionPreset,
   ClipSuggestion,
+  ClipTargetDuration,
+  CircumvisionProject,
   FrameMode,
   RenderSettings,
+  ProjectSummary,
+  ProjectExport,
+  TranscriptSegment,
 } from "@/lib/types";
 
-type AppMode = "welcome" | "ready" | "analyzing" | "editor";
+type AppMode = "welcome" | "ready" | "analyzing" | "editor" | "projects";
 type InspectorTab = "captions" | "frame" | "transcript";
 
 const DEFAULT_SETTINGS: RenderSettings = {
@@ -58,6 +59,8 @@ const DEFAULT_SETTINGS: RenderSettings = {
   captionsEnabled: true,
   highlight: true,
   frameMode: "fill",
+  frameX: 0,
+  frameY: 0,
 };
 
 type ApiErrorPayload = {
@@ -65,19 +68,8 @@ type ApiErrorPayload = {
   requestId?: string;
 };
 
-type AnalysisJobStartPayload = {
-  jobId: string;
-  title: string;
-  duration: number;
-  totalChunks: number;
-};
-
-type AnalysisChunkPayload = {
-  completedChunks: number;
-  totalChunks: number;
-  completedDuration: number;
-  totalDuration: number;
-  transcriptSegments: number;
+type ProjectCreationPayload = {
+  project: CircumvisionProject;
 };
 
 function parseApiPayload<T extends object>(body: string, responseStatus: number, action: string): T & ApiErrorPayload {
@@ -108,13 +100,21 @@ function uploadPart(
   chunkIndex: number,
   totalChunks: number,
   onProgress: (uploadedBytes: number) => void,
+  signal?: AbortSignal,
 ) {
   return new Promise<void>((resolve, reject) => {
     const request = new XMLHttpRequest();
+    const cleanup = () => signal?.removeEventListener("abort", abort);
+    const abort = () => request.abort();
+    if (signal?.aborted) {
+      reject(new DOMException("The upload was cancelled.", "AbortError"));
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
     request.open("POST", "/api/uploads");
     request.timeout = 60_000;
     request.setRequestHeader("Content-Type", "application/octet-stream");
-    request.setRequestHeader("x-upload-id", jobId);
+    request.setRequestHeader("x-project-id", jobId);
     request.setRequestHeader("x-chunk-index", String(chunkIndex));
     request.setRequestHeader("x-total-chunks", String(totalChunks));
     request.upload.onprogress = (event) => {
@@ -122,10 +122,11 @@ function uploadPart(
         onProgress(event.loaded);
       }
     };
-    request.onerror = () => reject(new Error("The upload was interrupted. Check your connection and try again."));
-    request.onabort = () => reject(new Error("The upload was cancelled."));
-    request.ontimeout = () => reject(new Error("An upload section timed out. Retrying may help."));
+    request.onerror = () => { cleanup(); reject(new Error("The upload was interrupted. Check your connection and try again.")); };
+    request.onabort = () => { cleanup(); reject(new DOMException("The upload was cancelled.", "AbortError")); };
+    request.ontimeout = () => { cleanup(); reject(new Error("An upload section timed out. Retrying may help.")); };
     request.onload = () => {
+      cleanup();
       try {
         const payload = parseApiPayload<ApiErrorPayload>(request.responseText, request.status, "Uploading media");
         if (request.status < 200 || request.status >= 300) {
@@ -142,11 +143,21 @@ function uploadPart(
   });
 }
 
-async function uploadFileInParts(file: File, jobId: string, onProgress: (progress: number) => void) {
+async function uploadFileInParts(
+  file: File,
+  jobId: string,
+  onProgress: (progress: number) => void,
+  completedParts: number[] = [],
+  signal?: AbortSignal,
+) {
   const totalChunks = Math.ceil(file.size / UPLOAD_PART_BYTES);
-  let reportedProgress = 0;
+  const completed = new Set(completedParts);
+  let reportedProgress = completed.size / totalChunks;
+  onProgress(reportedProgress);
 
   for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+    if (signal?.aborted) throw new DOMException("The upload was cancelled.", "AbortError");
+    if (completed.has(chunkIndex)) continue;
     const start = chunkIndex * UPLOAD_PART_BYTES;
     const end = Math.min(file.size, start + UPLOAD_PART_BYTES);
     const part = file.slice(start, end);
@@ -157,7 +168,7 @@ async function uploadFileInParts(file: File, jobId: string, onProgress: (progres
         await uploadPart(part, jobId, chunkIndex, totalChunks, (partBytes) => {
           reportedProgress = Math.max(reportedProgress, (start + partBytes) / file.size);
           onProgress(reportedProgress);
-        });
+        }, signal);
         lastError = undefined;
         break;
       } catch (error) {
@@ -172,10 +183,6 @@ async function uploadFileInParts(file: File, jobId: string, onProgress: (progres
   }
 
   return totalChunks;
-}
-
-function createJobId() {
-  return `job-${crypto.randomUUID()}`;
 }
 
 function formatTime(totalSeconds: number, compact = false) {
@@ -216,9 +223,11 @@ function WelcomeView({
   file,
   title,
   duration,
+  targetDuration,
   error,
   onFile,
   onTitle,
+  onTargetDuration,
   onAnalyze,
   onClear,
   onSample,
@@ -227,9 +236,11 @@ function WelcomeView({
   file: File | null;
   title: string;
   duration: number;
+  targetDuration: ClipTargetDuration;
   error: string;
   onFile: (file: File) => void;
   onTitle: (value: string) => void;
+  onTargetDuration: (value: ClipTargetDuration) => void;
   onAnalyze: () => void;
   onClear: () => void;
   onSample: () => void;
@@ -250,7 +261,6 @@ function WelcomeView({
         <BrandMark />
         <div className="welcome-nav-meta">
           <span className="status-dot"><i /> Local workspace</span>
-          <button className="icon-button" aria-label="Settings"><Settings size={17} /></button>
           <span className="avatar">TR</span>
         </div>
       </header>
@@ -276,7 +286,7 @@ function WelcomeView({
           <input
             ref={inputRef}
             type="file"
-            accept="video/mp4,video/quicktime,video/webm,audio/mpeg,audio/mp4,audio/wav,audio/webm"
+            accept="video/mp4,video/quicktime,video/webm,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,audio/webm"
             hidden
             onChange={(event: ChangeEvent<HTMLInputElement>) => {
               const selected = event.target.files?.[0];
@@ -289,7 +299,7 @@ function WelcomeView({
               <span className="upload-orbit"><Upload size={25} strokeWidth={1.7} /></span>
               <span className="drop-title">Drop a sermon here</span>
               <span className="drop-note">or click to choose a video</span>
-              <span className="file-types">MP4 · MOV · WEBM · MP3 · WAV <i /> UP TO 2 GB</span>
+              <span className="file-types">MP4 · MOV · WEBM · MP3 · M4A · WAV <i /> UP TO 2 GB</span>
             </button>
           ) : (
             <div className="selected-file">
@@ -305,6 +315,10 @@ function WelcomeView({
                 <span>SERMON TITLE</span>
                 <input value={title} onChange={(event) => onTitle(event.target.value)} placeholder="Name this sermon" />
               </label>
+              <div className="target-length">
+                <span>TARGET CLIP LENGTH</span>
+                <div>{([15, 30, 45, 60] as ClipTargetDuration[]).map((seconds) => <button key={seconds} className={targetDuration === seconds ? "active" : ""} onClick={() => onTargetDuration(seconds)}>{seconds}s</button>)}</div>
+              </div>
               {error && <p className="form-error"><Info size={15} />{error}</p>}
               <button className="primary-button analyze-button" disabled={mode === "analyzing"} onClick={onAnalyze}>
                 <WandSparkles size={17} /> Analyze sermon <span>↗</span>
@@ -326,7 +340,7 @@ function WelcomeView({
   );
 }
 
-function AnalyzingView({ fileName, step, progress, activeDetail }: { fileName: string; step: number; progress: number; activeDetail: string }) {
+function AnalyzingView({ fileName, step, progress, activeDetail, onCancel }: { fileName: string; step: number; progress: number; activeDetail: string; onCancel: () => void }) {
   const steps = [
     { label: "Preparing media", detail: "Compressing the audio track" },
     { label: "Transcribing sermon", detail: "Identifying speakers and timing" },
@@ -364,18 +378,134 @@ function AnalyzingView({ fileName, step, progress, activeDetail }: { fileName: s
             </div>
           ))}
         </div>
-        <small className="analysis-note">Long sermons can take several minutes. Keep this tab open.</small>
+        <small className="analysis-note">Processing continues safely if you leave or refresh this page.</small>
+        <button className="analysis-cancel" onClick={onCancel}>Pause and return to projects</button>
       </div>
     </main>
   );
 }
 
-function ClipList({ clips, selectedId, onSelect }: { clips: ClipSuggestion[]; selectedId: string; onSelect: (clip: ClipSuggestion) => void }) {
+function SignInView() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!/^#(confirmation_token|recovery_token|invite_token|email_change_token|access_token)=/.test(window.location.hash)) return;
+    void import("@netlify/identity").then(async ({ handleAuthCallback }) => {
+      try {
+        await handleAuthCallback();
+        window.location.replace("/");
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "The sign-in link could not be completed.");
+      }
+    });
+  }, []);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const { login } = await import("@netlify/identity");
+      await login(email.trim(), password);
+      window.location.reload();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Sign in failed.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="auth-shell">
+      <header className="welcome-nav"><BrandMark /></header>
+      <section className="auth-panel">
+        <p className="eyebrow"><span>PRIVATE WORKSPACE</span><i /> TYSHONE ROLAND</p>
+        <h1>Sign in to<br /><em>Circumvision.</em></h1>
+        <p>Your sermons, transcripts, edits, and exports stay inside your private workspace.</p>
+        <form onSubmit={submit}>
+          <label><span>Email</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+          <label><span>Password</span><input required type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+          {error && <div className="form-error"><Info size={15} /> {error}</div>}
+          <button className="primary-button" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Scissors size={17} />} {busy ? "Signing in…" : "Sign in"}</button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function ProjectsView({
+  projects,
+  loading,
+  onNew,
+  onOpen,
+  onDelete,
+  onRefresh,
+  onLogout,
+}: {
+  projects: ProjectSummary[];
+  loading: boolean;
+  onNew: () => void;
+  onOpen: (project: ProjectSummary) => void;
+  onDelete: (project: ProjectSummary) => void;
+  onRefresh: () => void;
+  onLogout: () => void;
+}) {
+  return (
+    <main className="projects-shell">
+      <header className="welcome-nav">
+        <BrandMark />
+        <div className="welcome-nav-meta">
+          <span className="status-dot"><i /> Private workspace</span>
+          <button className="icon-button" onClick={onRefresh} aria-label="Refresh projects"><RotateCcw size={17} /></button>
+          <button className="icon-button" onClick={onLogout} aria-label="Sign out"><LogOut size={17} /></button>
+          <span className="avatar">TR</span>
+        </div>
+      </header>
+      <section className="projects-main">
+        <div className="projects-heading">
+          <div><p className="eyebrow"><span>TYSHONE ROLAND</span><i /> PROJECTS</p><h1>Sermon workspace</h1><p>Return to an edit, monitor processing, or start with a new message.</p></div>
+          <button className="primary-button" onClick={onNew}><Plus size={17} /> New sermon</button>
+        </div>
+        <div className="project-table" aria-busy={loading}>
+          <div className="project-table-head"><span>PROJECT</span><span>STATUS</span><span>UPDATED</span><span>OUTPUT</span><span /></div>
+          {loading ? (
+            <div className="project-empty"><LoaderCircle className="spin" size={22} /><strong>Loading projects</strong></div>
+          ) : projects.length ? projects.map((project) => (
+            <article className="project-row" key={project.id}>
+              <button className="project-open" onClick={() => onOpen(project)} aria-label={`Open ${project.title}`}>
+                <span className="project-symbol"><Film size={17} /></span>
+                <span><strong>{project.title}</strong><small>{project.source.fileName} · {formatFileSize(project.source.fileSize)}{project.duration ? ` · ${formatTime(project.duration, true)}` : ""}</small></span>
+              </button>
+              <div className={`project-status status-${project.status}`}><i /><span><strong>{project.status}</strong><small>{project.stage}</small></span></div>
+              <time dateTime={project.updatedAt}>{new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(project.updatedAt))}</time>
+              <span className="project-output">{project.exports.filter((item) => item.status === "ready").length} exports<small>{project.clipCount} clips</small></span>
+              <button className="project-delete" onClick={() => onDelete(project)} aria-label={`Delete ${project.title}`}><Trash2 size={15} /></button>
+              {project.progress < 100 && <span className="project-progress"><i style={{ width: `${project.progress}%` }} /></span>}
+            </article>
+          )) : (
+            <div className="project-empty"><Scissors size={24} /><strong>No sermons yet</strong><p>Upload the first message to create its transcript and clips.</p><button onClick={onNew}>Start a project</button></div>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function ClipList({ clips, selectedId, regenerating, onSelect, onRegenerate, onCreate }: {
+  clips: ClipSuggestion[];
+  selectedId: string;
+  regenerating: boolean;
+  onSelect: (clip: ClipSuggestion) => void;
+  onRegenerate: () => void;
+  onCreate: () => void;
+}) {
   return (
     <aside className="clip-panel">
       <div className="clip-panel-head">
         <div><span>AI SELECTS</span><strong>{clips.length} moments found</strong></div>
-        <button className="small-icon"><Search size={15} /></button>
+        <button className="small-icon" disabled={regenerating} onClick={onRegenerate} aria-label="Regenerate clip suggestions" title="Regenerate suggestions">{regenerating ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button>
       </div>
       <div className="clip-list">
         {clips.map((clip, index) => (
@@ -385,13 +515,13 @@ function ClipList({ clips, selectedId, onSelect }: { clips: ClipSuggestion[]; se
               <span className="clip-score"><Sparkles size={10} /> {clip.score}% MATCH</span>
               <strong>{clip.title}</strong>
               <p>“{clip.hook}”</p>
+              <small className="clip-reason">{clip.reason}</small>
               <small><Clock3 size={11} /> {formatTime(clip.end - clip.start, true)} <i /> {clip.platform}</small>
             </div>
-            <MoreHorizontal className="clip-more" size={16} />
           </button>
         ))}
       </div>
-      <button className="add-clip"><Plus size={14} /> Create manual clip</button>
+      <button className="add-clip" onClick={onCreate}><Plus size={14} /> Create manual clip</button>
     </aside>
   );
 }
@@ -400,21 +530,38 @@ function Inspector({
   tab,
   settings,
   selectedClip,
-  transcriptText,
+  transcript,
   onTab,
   onSettings,
   onClipChange,
+  onTranscriptChange,
+  onResetSettings,
+  exports,
+  onDownloadExport,
+  onCancelExport,
+  mobileOpen,
+  onMobileClose,
 }: {
   tab: InspectorTab;
   settings: RenderSettings;
   selectedClip: ClipSuggestion;
-  transcriptText: string;
+  transcript: TranscriptSegment[];
   onTab: (tab: InspectorTab) => void;
   onSettings: (updates: Partial<RenderSettings>) => void;
   onClipChange: (updates: Partial<ClipSuggestion>) => void;
+  onTranscriptChange: (segmentId: string, text: string) => void;
+  onResetSettings: () => void;
+  exports: ProjectExport[];
+  onDownloadExport: (item: ProjectExport) => void;
+  onCancelExport: (item: ProjectExport) => void;
+  mobileOpen: boolean;
+  onMobileClose: () => void;
 }) {
+  const selectedSegments = transcript.filter((segment) => segment.end > selectedClip.start && segment.start < selectedClip.end);
+
   return (
-    <aside className="inspector">
+    <aside className={`inspector ${mobileOpen ? "mobile-open" : ""}`}>
+      <button className="inspector-close" aria-label="Close editing tools" onClick={onMobileClose}><X size={18} /></button>
       <div className="inspector-tabs">
         <button className={tab === "captions" ? "active" : ""} onClick={() => onTab("captions")}><Captions size={15} /> Captions</button>
         <button className={tab === "frame" ? "active" : ""} onClick={() => onTab("frame")}><Frame size={15} /> Frame</button>
@@ -425,7 +572,7 @@ function Inspector({
         {tab === "captions" && (
           <>
             <section className="control-section">
-              <div className="control-heading"><span>CAPTION STYLE</span><button><RotateCcw size={12} /> Reset</button></div>
+              <div className="control-heading"><span>CAPTION STYLE</span><button onClick={onResetSettings}><RotateCcw size={12} /> Reset</button></div>
               <div className="caption-presets">
                 {(["bold", "clean", "minimal"] as CaptionPreset[]).map((preset) => (
                   <button key={preset} className={settings.captionPreset === preset ? "selected" : ""} onClick={() => onSettings({ captionPreset: preset })}>
@@ -480,12 +627,17 @@ function Inspector({
                 {(["fill", "fit"] as FrameMode[]).map((mode) => (
                   <button key={mode} className={settings.frameMode === mode ? "selected" : ""} onClick={() => onSettings({ frameMode: mode })}>
                     {mode === "fill" ? <Maximize2 size={18} /> : <LayoutTemplate size={18} />}
-                    <span><strong>{mode === "fill" ? "Fill frame" : "Smart fit"}</strong><small>{mode === "fill" ? "Crop to the selected ratio" : "Keep the full frame with a soft backdrop"}</small></span>
+                    <span><strong>{mode === "fill" ? "Fill frame" : "Full frame"}</strong><small>{mode === "fill" ? "Crop to the selected ratio" : "Keep the full frame with a soft backdrop"}</small></span>
                   </button>
                 ))}
               </div>
             </section>
-            <p className="inspector-tip"><Sparkles size={14} /> Smart fit keeps the speaker visible when the source was shot wide.</p>
+            <section className="control-section frame-position">
+              <div className="control-heading"><span>MANUAL REFRAME</span><button onClick={() => onSettings({ frameX: 0, frameY: 0 })}><RotateCcw size={12} /> Center</button></div>
+              <label><span>Horizontal <b>{settings.frameX > 0 ? "+" : ""}{settings.frameX}</b></span><input className="range" type="range" min="-100" max="100" step="5" value={settings.frameX} onChange={(event) => onSettings({ frameX: Number(event.target.value) })} /></label>
+              <label><span>Vertical <b>{settings.frameY > 0 ? "+" : ""}{settings.frameY}</b></span><input className="range" type="range" min="-100" max="100" step="5" value={settings.frameY} onChange={(event) => onSettings({ frameY: Number(event.target.value) })} /></label>
+            </section>
+            <p className="inspector-tip"><Sparkles size={14} /> Use Full frame to preserve the whole shot or move the crop manually to keep the speaker centered.</p>
           </>
         )}
 
@@ -501,10 +653,37 @@ function Inspector({
             </section>
             <section className="control-section">
               <div className="control-heading"><span>SELECTED TRANSCRIPT</span><b>{Math.round(selectedClip.end - selectedClip.start)} SEC</b></div>
-              <div className="transcript-editor">{transcriptText || "No transcript falls inside this range."}</div>
+              <div className="transcript-editor">
+                {selectedSegments.length ? selectedSegments.map((segment) => (
+                  <label key={segment.id} className="transcript-segment">
+                    <span>{segment.speaker} · {formatTime(segment.start, true)}</span>
+                    <textarea
+                      value={segment.text}
+                      rows={Math.max(2, Math.ceil(segment.text.length / 42))}
+                      onChange={(event) => onTranscriptChange(segment.id, event.target.value)}
+                    />
+                  </label>
+                )) : "No transcript falls inside this range."}
+              </div>
             </section>
-            <p className="inspector-tip"><Info size={14} /> Timing edits update the preview and final render. Transcript text comes from the speaker-aware analysis.</p>
+            <p className="inspector-tip"><Info size={14} /> Corrections keep the original timing and are used for captions and final rendering.</p>
           </>
+        )}
+        {exports.length > 0 && (
+          <section className="control-section export-history">
+            <div className="control-heading"><span>FINISHED EXPORTS</span><b>{exports.filter((item) => item.status === "ready").length} READY</b></div>
+            <div>
+              {exports.slice(0, 5).map((item) => (
+                <div className="export-row" key={item.id}>
+                  <button disabled={item.status !== "ready"} onClick={() => onDownloadExport(item)}>
+                    <span><strong>{item.aspect}</strong><small>{item.status === "ready" && item.fileSize ? formatFileSize(item.fileSize) : item.status}</small></span>
+                    {item.status === "ready" ? <Download size={14} /> : item.status === "failed" || item.status === "cancelled" ? <Info size={14} /> : <LoaderCircle className="spin" size={14} />}
+                  </button>
+                  {(item.status === "queued" || item.status === "rendering") && <button className="cancel-export" aria-label={`Cancel ${item.aspect} export`} onClick={() => onCancelExport(item)}><X size={13} /></button>}
+                </div>
+              ))}
+            </div>
+          </section>
         )}
       </div>
     </aside>
@@ -517,12 +696,14 @@ function Timeline({
   currentTime,
   playing,
   onSeek,
+  onReset,
 }: {
   analysis: AnalysisResult;
   selectedClip: ClipSuggestion;
   currentTime: number;
   playing: boolean;
   onSeek: (time: number) => void;
+  onReset: () => void;
 }) {
   const windowStart = Math.max(0, selectedClip.start - 12);
   const windowEnd = Math.min(analysis.duration, selectedClip.end + 12);
@@ -543,7 +724,7 @@ function Timeline({
     <section className={`timeline ${playing ? "is-playing" : ""}`}>
       <div className="timeline-toolbar">
         <div><Scissors size={14} /><strong>{selectedClip.title}</strong><span>{formatTime(selectedClip.end - selectedClip.start, true)}</span></div>
-        <div><button><RotateCcw size={13} /></button><button><Gauge size={13} /> 100%</button><button><ChevronDown size={13} /></button></div>
+        <div><button onClick={onReset}><RotateCcw size={13} /> Reset timing</button></div>
       </div>
       <div className="ruler">{ticks.map((tick) => <span key={tick} style={{ left: `${((tick - windowStart) / windowDuration) * 100}%` }}>{formatTime(tick, true)}</span>)}</div>
       <div className="timeline-track" onClick={seek}>
@@ -567,24 +748,37 @@ function Timeline({
 
 function EditorView({
   analysis,
-  sourceFile,
+  projectId,
+  initialEditor,
+  initialExports,
   videoUrl,
   onBack,
+  onNew,
 }: {
   analysis: AnalysisResult;
-  sourceFile: File | null;
+  projectId: string | null;
+  initialEditor?: CircumvisionProject["editor"];
+  initialExports?: ProjectExport[];
   videoUrl: string | null;
   onBack: () => void;
+  onNew: () => void;
 }) {
-  const [selectedId, setSelectedId] = useState(analysis.clips[0]?.id || "");
-  const [clips, setClips] = useState(analysis.clips);
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [selectedId, setSelectedId] = useState(initialEditor?.selectedClipId || analysis.clips[0]?.id || "");
+  const [clips, setClips] = useState(initialEditor?.clips || analysis.clips);
+  const [transcript, setTranscript] = useState(initialEditor?.transcript || analysis.transcript);
+  const [settings, setSettings] = useState({ ...DEFAULT_SETTINGS, ...initialEditor?.settings });
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("captions");
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(analysis.clips[0]?.start || 0);
   const [playing, setPlaying] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exports, setExports] = useState(initialExports || []);
   const [toast, setToast] = useState("");
+  const [saveState, setSaveState] = useState(projectId ? "Saved" : "Sample project");
   const videoRef = useRef<HTMLVideoElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const selectedClip = clips.find((clip) => clip.id === selectedId) || clips[0];
 
   useEffect(() => {
@@ -592,6 +786,35 @@ function EditorView({
     const timeout = window.setTimeout(() => setToast(""), 3600);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setSaveState("Saving…");
+      try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ editor: { clips, transcript, settings, selectedClipId: selectedId } }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const payload = await readApiPayload<ApiErrorPayload>(response, "Autosave");
+          throw new Error(payload.error || "Autosave failed.");
+        }
+        setSaveState("Saved");
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setSaveState("Save failed");
+        setToast(error instanceof Error ? error.message : "The editor changes could not be saved.");
+      }
+    }, 700);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [clips, projectId, selectedId, settings, transcript]);
 
   useEffect(() => {
     if (!playing || videoUrl || !selectedClip) return;
@@ -609,18 +832,12 @@ function EditorView({
 
   const currentCaption = useMemo(() => {
     if (!selectedClip) return null;
-    return analysis.transcript.find((segment) => currentTime >= segment.start && currentTime <= segment.end)
-      || analysis.transcript.find((segment) => segment.start >= selectedClip.start && segment.end <= selectedClip.end)
+    return transcript.find((segment) => currentTime >= segment.start && currentTime <= segment.end)
+      || transcript.find((segment) => segment.start >= selectedClip.start && segment.end <= selectedClip.end)
       || null;
-  }, [analysis.transcript, currentTime, selectedClip]);
+  }, [currentTime, selectedClip, transcript]);
 
-  const selectedTranscript = useMemo(() => {
-    if (!selectedClip) return "";
-    return analysis.transcript
-      .filter((segment) => segment.end > selectedClip.start && segment.start < selectedClip.end)
-      .map((segment) => segment.text)
-      .join(" ");
-  }, [analysis.transcript, selectedClip]);
+  const workingAnalysis = useMemo(() => ({ ...analysis, clips, transcript }), [analysis, clips, transcript]);
 
   if (!selectedClip) return null;
 
@@ -663,37 +880,157 @@ function EditorView({
     setClips((items) => items.map((clip) => clip.id === selectedClip.id ? { ...clip, ...updates } : clip));
   };
 
+  const resetSelectedClip = () => {
+    const original = analysis.clips.find((clip) => clip.id === selectedClip.id);
+    if (!original) {
+      setToast("Manual clips do not have AI timing to restore.");
+      return;
+    }
+    setClips((items) => items.map((clip) => clip.id === selectedClip.id ? original : clip));
+    setCurrentTime(original.start);
+  };
+
+  const createManualClip = () => {
+    const start = Math.max(0, Math.min(currentTime, Math.max(0, analysis.duration - 1)));
+    const end = Math.min(analysis.duration, start + 30);
+    const spoken = transcript.filter((segment) => segment.end > start && segment.start < end).map((segment) => segment.text).join(" ");
+    const manual: ClipSuggestion = {
+      id: `manual-${crypto.randomUUID()}`,
+      title: "Manual clip",
+      start,
+      end: Math.max(start + 0.5, end),
+      hook: spoken.split(/\s+/).slice(0, 18).join(" ") || "Custom sermon moment",
+      score: 0,
+      reason: "A manually selected moment. Adjust the timing and title before export.",
+      platform: "Reels · Shorts",
+    };
+    setClips((items) => [...items, manual]);
+    setSelectedId(manual.id);
+    setCurrentTime(manual.start);
+    setInspectorTab("transcript");
+  };
+
+  const regenerateSuggestions = async () => {
+    if (!projectId) {
+      setToast("Upload and analyze a sermon before regenerating suggestions.");
+      return;
+    }
+    setRegenerating(true);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/suggestions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const payload = await readApiPayload<{ clips: ClipSuggestion[] }>(response, "Regenerating suggestions");
+      if (!response.ok || !payload.clips?.length) throw new Error(payload.error || "No new complete moments were found.");
+      setClips(payload.clips);
+      setSelectedId(payload.clips[0].id);
+      setCurrentTime(payload.clips[0].start);
+      setToast("Fresh, non-overlapping clip suggestions are ready.");
+    } catch (caught) {
+      setToast(caught instanceof Error ? caught.message : "Suggestions could not be regenerated.");
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  const downloadStoredExport = async (item: ProjectExport) => {
+    if (!projectId || !item.fileSize) {
+      setToast("This export is not ready to download yet.");
+      return;
+    }
+    setExporting(true);
+    setExportProgress(0);
+    try {
+      const parts: ArrayBuffer[] = [];
+      let offset = 0;
+      while (offset < item.fileSize) {
+        const end = Math.min(item.fileSize - 1, offset + UPLOAD_PART_BYTES - 1);
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(item.id)}/media`, {
+          headers: { Range: `bytes=${offset}-${end}` },
+        });
+        if (response.status !== 206) {
+          const payload = await readApiPayload<ApiErrorPayload>(response, "Downloading export");
+          throw new Error(payload.error || "The export download was interrupted.");
+        }
+        const part = await response.arrayBuffer();
+        if (!part.byteLength) throw new Error("The export download returned an empty section.");
+        parts.push(part);
+        offset += part.byteLength;
+        setExportProgress(Math.round((offset / item.fileSize) * 100));
+      }
+      const url = URL.createObjectURL(new Blob(parts, { type: "video/mp4" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = item.fileName;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setToast("Your finished MP4 was downloaded.");
+    } catch (caught) {
+      setToast(caught instanceof Error ? caught.message : "The export could not be downloaded.");
+    } finally {
+      setExporting(false);
+      setExportProgress(0);
+    }
+  };
+
   const exportClip = async () => {
-    if (!sourceFile) {
+    if (!projectId) {
       setToast("Sample mode is for exploration. Upload a sermon to render an MP4.");
       return;
     }
     setExporting(true);
+    setExportProgress(0);
     try {
-      const form = new FormData();
-      form.append("file", sourceFile);
-      form.append("start", String(selectedClip.start));
-      form.append("end", String(selectedClip.end));
-      form.append("transcript", JSON.stringify(analysis.transcript));
-      form.append("settings", JSON.stringify(settings));
-      const response = await fetch("/api/render", { method: "POST", body: form });
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/exports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clip: selectedClip, transcript, settings }),
+      });
+      const queued = await readApiPayload<{ export: ProjectExport }>(response, "Queuing export");
       if (!response.ok) {
-        const payload = await readApiPayload<ApiErrorPayload>(response, "Export");
-        const suffix = payload.requestId ? ` Reference: ${payload.requestId}.` : "";
-        throw new Error(`${payload.error || "The render did not finish."}${suffix}`);
+        const suffix = queued.requestId ? ` Reference: ${queued.requestId}.` : "";
+        throw new Error(`${queued.error || "The export could not be queued."}${suffix}`);
       }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${selectedClip.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "sermon-short"}.mp4`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      setToast("Your captioned MP4 is ready.");
+      setExports((items) => [queued.export, ...items.filter((item) => item.id !== queued.export.id)]);
+      setToast("Export queued. You can leave this page while it renders.");
+
+      for (let attempt = 0; attempt < 450; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        const projectResponse = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { cache: "no-store" });
+        const projectPayload = await readApiPayload<{ project: CircumvisionProject }>(projectResponse, "Checking export");
+        if (!projectResponse.ok || !projectPayload.project) throw new Error(projectPayload.error || "Export status could not be checked.");
+        const item = projectPayload.project.exports.find((value) => value.id === queued.export.id);
+        if (!item) throw new Error("The queued export could not be found.");
+        setExports(projectPayload.project.exports);
+        if (item.status === "failed") throw new Error(item.error || "The export failed.");
+        if (item.status === "cancelled") throw new Error("The export was cancelled.");
+        if (item.status === "ready") {
+          setExporting(false);
+          await downloadStoredExport(item);
+          return;
+        }
+      }
+      setToast("The export is still rendering in the background. It will remain in this project.");
     } catch (error) {
       setToast(error instanceof Error ? error.message : "The clip could not be exported.");
     } finally {
       setExporting(false);
+      setExportProgress(0);
+    }
+  };
+
+  const cancelStoredExport = async (item: ProjectExport) => {
+    if (!projectId) return;
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+      const payload = await readApiPayload<{ export?: ProjectExport }>(response, "Cancelling export");
+      if (!response.ok) throw new Error(payload.error || "The export could not be cancelled.");
+      setExports((items) => items.map((value) => value.id === item.id ? { ...value, status: "cancelled" } : value));
+      setToast("Export cancelled. The source and editor changes are still safe.");
+    } catch (caught) {
+      setToast(caught instanceof Error ? caught.message : "The export could not be cancelled.");
     }
   };
 
@@ -705,12 +1042,10 @@ function EditorView({
       <nav className="rail">
         <BrandMark compact />
         <div className="rail-main">
-          <button className="active" aria-label="Editor"><Home size={18} /></button>
-          <button aria-label="Projects"><FolderOpen size={18} /></button>
-          <button aria-label="History"><History size={18} /></button>
+          <button className="active" aria-label="Editor" onClick={onBack}><Home size={18} /></button>
+          <button aria-label="Projects" onClick={onBack}><FolderOpen size={18} /></button>
         </div>
         <div className="rail-foot">
-          <button aria-label="Settings"><Settings size={18} /></button>
           <span className="avatar">TR</span>
         </div>
       </nav>
@@ -720,20 +1055,19 @@ function EditorView({
           <div className="project-breadcrumb">
             <button onClick={onBack} aria-label="Back to upload"><ArrowLeft size={16} /></button>
             <div><span>PROJECT / SERMON</span><strong>{analysis.title}</strong></div>
-            <button className="small-icon"><ChevronDown size={14} /></button>
           </div>
           <div className="editor-actions">
-            <span className="saved-state"><Check size={12} /> Session ready</span>
-            <button className="secondary-button"><Plus size={15} /> New project</button>
+            <span className="saved-state"><Check size={12} /> {saveState}</span>
+            <button className="secondary-button" onClick={onNew}><Plus size={15} /> New project</button>
             <button className="export-button" disabled={exporting} onClick={exportClip}>
               {exporting ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}
-              {exporting ? "Rendering…" : "Export clip"}
+              {exporting ? exportProgress ? `${exportProgress}% · Downloading` : "Rendering…" : "Export clip"}
             </button>
           </div>
         </header>
 
         <div className="workspace">
-          <ClipList clips={clips} selectedId={selectedId} onSelect={selectClip} />
+          <ClipList clips={clips} selectedId={selectedId} regenerating={regenerating} onSelect={selectClip} onRegenerate={() => void regenerateSuggestions()} onCreate={createManualClip} />
 
           <section className="canvas-area">
             <div className="canvas-toolbar">
@@ -744,19 +1078,21 @@ function EditorView({
                   </button>
                 ))}
               </div>
-              <button className="canvas-fit"><Maximize2 size={13} /> Fit <ChevronDown size={12} /></button>
+              <button className="canvas-fit" onClick={() => setSettings((value) => ({ ...value, frameMode: value.frameMode === "fill" ? "fit" : "fill" }))}><Maximize2 size={13} /> {settings.frameMode === "fill" ? "Fill" : "Full frame"}</button>
+              <button className="mobile-tools" onClick={() => setMobileToolsOpen(true)}><Frame size={13} /> Edit</button>
             </div>
 
             <div className="stage-wrap">
-              <div className={`video-stage aspect-${settings.aspect.replace(":", "-")} ${settings.frameMode === "fit" ? "smart-fit" : ""} ${playing ? "is-playing" : ""}`}>
+              <div ref={stageRef} className={`video-stage aspect-${settings.aspect.replace(":", "-")} ${settings.frameMode === "fit" ? "smart-fit" : ""} ${playing ? "is-playing" : ""}`}>
                 {videoUrl ? (
                   <>
-                    {settings.frameMode === "fit" && <video className="blur-layer" src={videoUrl} muted aria-hidden="true" />}
+                    {settings.frameMode === "fit" && <video className="blur-layer" src={videoUrl} muted aria-hidden="true" style={{ objectPosition: `${50 + settings.frameX / 2}% ${50 + settings.frameY / 2}%` }} />}
                     <video
                       ref={videoRef}
                       className="source-video"
                       src={videoUrl}
                       preload="metadata"
+                      style={{ objectPosition: `${50 + settings.frameX / 2}% ${50 + settings.frameY / 2}%` }}
                       onTimeUpdate={(event) => {
                         const time = event.currentTarget.currentTime;
                         setCurrentTime(time);
@@ -789,22 +1125,30 @@ function EditorView({
             <div className="player-controls">
               <div className="player-time"><strong>{formatTime(currentTime - selectedClip.start)}</strong><span>/ {formatTime(selectedClip.end - selectedClip.start)}</span></div>
               <button className="play-button" aria-label={playing ? "Pause clip" : "Play clip"} onClick={togglePlay}>{playing ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}</button>
-              <div className="player-right"><button><Captions size={15} /></button><button><Maximize2 size={15} /></button></div>
+              <div className="player-right"><button aria-label="Toggle captions" aria-pressed={settings.captionsEnabled} onClick={() => setSettings((value) => ({ ...value, captionsEnabled: !value.captionsEnabled }))}><Captions size={15} /></button><button aria-label="Enter fullscreen preview" onClick={() => void stageRef.current?.requestFullscreen().catch(() => setToast("Fullscreen preview is not available in this browser."))}><Maximize2 size={15} /></button></div>
             </div>
           </section>
 
+          {mobileToolsOpen && <button className="inspector-backdrop" aria-label="Close editing tools" onClick={() => setMobileToolsOpen(false)} />}
           <Inspector
             tab={inspectorTab}
             settings={settings}
             selectedClip={selectedClip}
-            transcriptText={selectedTranscript}
+            transcript={transcript}
             onTab={setInspectorTab}
             onSettings={(updates) => setSettings((value) => ({ ...value, ...updates }))}
             onClipChange={updateClip}
+            onTranscriptChange={(segmentId, text) => setTranscript((segments) => segments.map((segment) => segment.id === segmentId ? { ...segment, text } : segment))}
+            onResetSettings={() => setSettings(DEFAULT_SETTINGS)}
+            exports={exports}
+            onDownloadExport={(item) => void downloadStoredExport(item)}
+            onCancelExport={(item) => void cancelStoredExport(item)}
+            mobileOpen={mobileToolsOpen}
+            onMobileClose={() => setMobileToolsOpen(false)}
           />
         </div>
 
-        <Timeline analysis={analysis} selectedClip={selectedClip} currentTime={currentTime} playing={playing} onSeek={seek} />
+        <Timeline analysis={workingAnalysis} selectedClip={selectedClip} currentTime={currentTime} playing={playing} onSeek={seek} onReset={resetSelectedClip} />
       </div>
       {toast && <div className="toast"><Check size={15} /> {toast}<button onClick={() => setToast("")}><X size={14} /></button></div>}
     </main>
@@ -813,21 +1157,78 @@ function EditorView({
 
 export function StudioApp() {
   const [mode, setMode] = useState<AppMode>("welcome");
+  const [sessionState, setSessionState] = useState<"loading" | "authenticated" | "unauthenticated">("loading");
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [duration, setDuration] = useState(0);
+  const [targetDuration, setTargetDuration] = useState<ClipTargetDuration>(30);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [initialEditor, setInitialEditor] = useState<CircumvisionProject["editor"]>();
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [resumeTarget, setResumeTarget] = useState<CircumvisionProject | null>(null);
   const [error, setError] = useState("");
   const [analysisStep, setAnalysisStep] = useState(0);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisDetail, setAnalysisDetail] = useState("Uploading sermon · 0% uploaded");
+  const operationController = useRef<AbortController | null>(null);
+  const activeProjectId = useRef<string | null>(null);
+
+  useEffect(() => {
+    activeProjectId.current = projectId;
+  }, [projectId]);
 
   useEffect(() => {
     return () => {
       if (videoUrl) URL.revokeObjectURL(videoUrl);
     };
   }, [videoUrl]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const sessionResponse = await fetch("/api/session", { cache: "no-store" });
+        const session = await readApiPayload<{ authenticated: boolean }>(sessionResponse, "Loading session");
+        if (!active) return;
+        if (!session.authenticated) {
+          setSessionState("unauthenticated");
+          setProjectsLoading(false);
+          return;
+        }
+        setSessionState("authenticated");
+        const response = await fetch("/api/projects", { cache: "no-store" });
+        const payload = await readApiPayload<{ projects: ProjectSummary[] }>(response, "Loading projects");
+        if (!response.ok) throw new Error(payload.error || "Projects could not be loaded.");
+        if (!active) return;
+        setProjects(payload.projects || []);
+        if (payload.projects?.length) setMode("projects");
+      } catch (caught) {
+        if (!active) return;
+        setError(caught instanceof Error ? caught.message : "The workspace could not be loaded.");
+        setSessionState("authenticated");
+      } finally {
+        if (active) setProjectsLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  const loadProjects = async () => {
+    setProjectsLoading(true);
+    try {
+      const response = await fetch("/api/projects", { cache: "no-store" });
+      const payload = await readApiPayload<{ projects: ProjectSummary[] }>(response, "Loading projects");
+      if (!response.ok) throw new Error(payload.error || "Projects could not be loaded.");
+      setProjects(payload.projects || []);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Projects could not be loaded.");
+    } finally {
+      setProjectsLoading(false);
+    }
+  };
 
   const chooseFile = async (selected: File) => {
     if (!selected.type.startsWith("video") && !selected.type.startsWith("audio")) {
@@ -850,7 +1251,56 @@ export function StudioApp() {
     setDuration(0);
     setTitle("");
     setError("");
+    setResumeTarget(null);
     setMode("welcome");
+  };
+
+  const openReadyProject = (project: CircumvisionProject) => {
+    if (!project.analysis?.clips.length) throw new Error("Processing completed without any usable clip suggestions.");
+    setInitialEditor(project.editor);
+    setAnalysis({
+      ...project.analysis,
+      clips: project.editor?.clips || project.analysis.clips,
+      transcript: project.editor?.transcript || project.analysis.transcript,
+    });
+    setProjectId(project.id);
+    setResumeTarget(null);
+    setAnalysisStep(3);
+    setAnalysisProgress(100);
+    setAnalysisDetail("Ready to edit");
+    setMode("editor");
+    void loadProjects();
+  };
+
+  const monitorProcessing = async (activeProjectId: string, signal?: AbortSignal) => {
+    for (let attempt = 0; attempt < 450; attempt += 1) {
+      if (signal?.aborted) throw new DOMException("Processing monitor cancelled.", "AbortError");
+      const response = await fetch(`/api/projects/${encodeURIComponent(activeProjectId)}`, { cache: "no-store", signal });
+      const payload = await readApiPayload<{ project: CircumvisionProject }>(response, "Checking processing");
+      if (!response.ok || !payload.project) throw new Error(payload.error || "Processing status could not be checked.");
+      const project = payload.project;
+      setAnalysisProgress(project.progress);
+      setAnalysisDetail(project.stage);
+      setAnalysisStep(project.status === "preparing" || project.status === "uploading" ? 0 : project.status === "transcribing" ? 1 : project.status === "selecting" ? 2 : 3);
+      if (project.analysis?.clips.length) {
+        openReadyProject(project);
+        return;
+      }
+      if (project.status === "failed") throw new Error(project.error || "Sermon processing failed. Retry from the project dashboard.");
+      if (project.status === "cancelled") throw new DOMException("Sermon processing was cancelled.", "AbortError");
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    throw new Error("Processing is still running in the background. Return to the project dashboard in a few minutes.");
+  };
+
+  const queueAndMonitor = async (activeProjectId: string, signal?: AbortSignal) => {
+    const response = await fetch(`/api/projects/${encodeURIComponent(activeProjectId)}/process`, { method: "POST", signal });
+    const payload = await readApiPayload<{ projectId: string; status: string }>(response, "Starting background processing");
+    if (!response.ok) {
+      const suffix = payload.requestId ? ` Reference: ${payload.requestId}.` : "";
+      throw new Error(`${payload.error || "The sermon could not be queued."}${suffix}`);
+    }
+    await monitorProcessing(activeProjectId, signal);
   };
 
   const analyze = async () => {
@@ -860,113 +1310,184 @@ export function StudioApp() {
     setAnalysisDetail("Uploading sermon · 0% uploaded");
     setMode("analyzing");
     setError("");
+    operationController.current?.abort();
+    const controller = new AbortController();
+    operationController.current = controller;
     let activeJobId = "";
     try {
-      activeJobId = createJobId();
-      const totalUploadChunks = await uploadFileInParts(file, activeJobId, (uploadProgress) => {
+      let project: CircumvisionProject;
+      if (resumeTarget) {
+        if (file.size !== resumeTarget.source.fileSize) throw new Error(`Choose the original ${formatFileSize(resumeTarget.source.fileSize)} source file to resume this upload.`);
+        project = resumeTarget;
+      } else {
+        const projectResponse = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title,
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+            totalParts: Math.ceil(file.size / UPLOAD_PART_BYTES),
+            targetDuration,
+          }),
+          signal: controller.signal,
+        });
+        const projectPayload = await readApiPayload<ProjectCreationPayload>(projectResponse, "Creating project");
+        if (!projectResponse.ok || !projectPayload.project) {
+          const suffix = projectPayload.requestId ? ` Reference: ${projectPayload.requestId}.` : "";
+          throw new Error(`${projectPayload.error || "The project could not be created."}${suffix}`);
+        }
+        project = projectPayload.project;
+      }
+      activeJobId = project.id;
+      setProjectId(activeJobId);
+      activeProjectId.current = activeJobId;
+
+      await uploadFileInParts(file, activeJobId, (uploadProgress) => {
         const uploadedPercent = Math.round(uploadProgress * 100);
         setAnalysisProgress(Math.round(uploadProgress * 12));
         setAnalysisDetail(`Uploading sermon · ${uploadedPercent}% uploaded`);
-      });
-      setAnalysisProgress(12);
-      setAnalysisDetail("Extracting and optimizing the audio track");
-
-      const startResponse = await fetch("/api/analyze/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobId: activeJobId,
-          title,
-          fileName: file.name,
-          fileSize: file.size,
-          totalChunks: totalUploadChunks,
-        }),
-      });
-      const startPayload = await readApiPayload<AnalysisJobStartPayload>(startResponse, "Preparing media");
-      if (!startResponse.ok) {
-        const suffix = startPayload.requestId ? ` Reference: ${startPayload.requestId}.` : "";
-        throw new Error(`${startPayload.error || "The sermon could not be prepared."}${suffix}`);
-      }
-
-      activeJobId = startPayload.jobId;
-      setAnalysisStep(1);
-      setAnalysisProgress(18);
-
-      for (let chunkIndex = 0; chunkIndex < startPayload.totalChunks; chunkIndex += 1) {
-        setAnalysisDetail(`Transcribing section ${chunkIndex + 1} of ${startPayload.totalChunks}`);
-        const chunkResponse = await fetch("/api/analyze/transcribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jobId: activeJobId, chunkIndex }),
-        });
-        const chunkPayload = await readApiPayload<AnalysisChunkPayload>(chunkResponse, "Transcription");
-        if (!chunkResponse.ok) {
-          const suffix = chunkPayload.requestId ? ` Reference: ${chunkPayload.requestId}.` : "";
-          throw new Error(`${chunkPayload.error || "Part of the sermon could not be transcribed."}${suffix}`);
-        }
-        const transcriptProgress = chunkPayload.totalDuration > 0
-          ? chunkPayload.completedDuration / chunkPayload.totalDuration
-          : chunkPayload.completedChunks / chunkPayload.totalChunks;
-        setAnalysisProgress(18 + Math.round(Math.max(0, Math.min(1, transcriptProgress)) * 64));
-      }
-
-      setAnalysisStep(2);
-      setAnalysisProgress(82);
-      setAnalysisDetail("Ranking complete moments with strong hooks");
-      const finishResponse = await fetch("/api/analyze/finish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: activeJobId }),
-      });
-      const payload = await readApiPayload<AnalysisResult>(finishResponse, "Finding clips");
-      if (!finishResponse.ok) {
-        const suffix = payload.requestId ? ` Reference: ${payload.requestId}.` : "";
-        throw new Error(`${payload.error || "The strongest clips could not be selected."}${suffix}`);
-      }
-      activeJobId = "";
-      if (!payload.clips?.length) throw new Error("The transcript completed, but no complete clip moments were found.");
-      setAnalysisStep(3);
-      setAnalysisProgress(96);
-      setAnalysisDetail("Preparing captions and editor controls");
+      }, project.source.uploadedParts, controller.signal);
       const url = URL.createObjectURL(file);
       setVideoUrl(url);
-      setAnalysis(payload as AnalysisResult);
-      setAnalysisProgress(100);
-      await new Promise((resolve) => window.setTimeout(resolve, 350));
-      setMode("editor");
+      await queueAndMonitor(activeJobId, controller.signal);
     } catch (caught) {
-      if (activeJobId) {
-        await fetch(`/api/analyze/start?jobId=${encodeURIComponent(activeJobId)}`, { method: "DELETE" }).catch(() => undefined);
+      if (controller.signal.aborted || caught instanceof DOMException && caught.name === "AbortError") {
+        setMode("projects");
+        void loadProjects();
+        return;
       }
       setError(caught instanceof Error ? caught.message : "The sermon could not be analyzed.");
       setMode("ready");
+    } finally {
+      if (operationController.current === controller) operationController.current = null;
     }
   };
 
   const openSample = () => {
     setAnalysis(DEMO_ANALYSIS);
+    setInitialEditor(undefined);
+    setProjectId(null);
     setVideoUrl(null);
     setFile(null);
     setMode("editor");
   };
 
-  const backToWelcome = () => {
+  const newProject = () => {
     setAnalysis(null);
+    setInitialEditor(undefined);
+    setProjectId(null);
+    setResumeTarget(null);
+    setFile(null);
     setVideoUrl(null);
-    clearFile();
+    setDuration(0);
+    setTitle("");
+    setError("");
+    setMode("welcome");
   };
 
-  if (mode === "analyzing") return <AnalyzingView fileName={file?.name || "Sermon"} step={analysisStep} progress={analysisProgress} activeDetail={analysisDetail} />;
-  if (mode === "editor" && analysis) return <EditorView analysis={analysis} sourceFile={file} videoUrl={videoUrl} onBack={backToWelcome} />;
+  const openProject = async (summary: ProjectSummary) => {
+    setError("");
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(summary.id)}`, { cache: "no-store" });
+      const payload = await readApiPayload<{ project: CircumvisionProject }>(response, "Opening project");
+      if (!response.ok || !payload.project) throw new Error(payload.error || "The project could not be opened.");
+      const project = payload.project;
+      setProjectId(project.id);
+      activeProjectId.current = project.id;
+      setTitle(project.title);
+      setDuration(project.duration || 0);
+      setTargetDuration(project.targetDuration || 30);
+      setVideoUrl(`/api/projects/${encodeURIComponent(project.id)}/media`);
+
+      if (project.analysis?.clips.length) {
+        openReadyProject(project);
+        setFile(null);
+        return;
+      }
+
+      if (project.status === "uploading" && project.source.uploadedParts.length < project.source.totalParts) {
+        setResumeTarget(project);
+        setFile(null);
+        setMode("welcome");
+        setError(`Choose the original ${project.source.fileName} to resume at ${Math.round((project.source.uploadedParts.length / project.source.totalParts) * 100)}%.`);
+        return;
+      }
+
+      setResumeTarget(project);
+      setMode("analyzing");
+      setAnalysisDetail(project.stage);
+      setAnalysisProgress(project.progress);
+      const isStale = Date.now() - Date.parse(project.updatedAt) > 16 * 60 * 1000;
+      operationController.current?.abort();
+      const controller = new AbortController();
+      operationController.current = controller;
+      if (project.status === "failed" || project.status === "uploading" || project.status === "cancelled" || isStale) await queueAndMonitor(project.id, controller.signal);
+      else await monitorProcessing(project.id, controller.signal);
+      if (operationController.current === controller) operationController.current = null;
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === "AbortError") {
+        setMode("projects");
+        void loadProjects();
+        return;
+      }
+      setError(caught instanceof Error ? caught.message : "The project could not be resumed.");
+      setMode("projects");
+    }
+  };
+
+  const removeProject = async (project: ProjectSummary) => {
+    if (!window.confirm(`Delete “${project.title}” and its stored media and exports?`)) return;
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
+      const payload = await readApiPayload<ApiErrorPayload>(response, "Deleting project");
+      if (!response.ok) throw new Error(payload.error || "The project could not be deleted.");
+      setProjects((items) => items.filter((item) => item.id !== project.id));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The project could not be deleted.");
+    }
+  };
+
+  const showProjects = () => {
+    operationController.current?.abort();
+    setAnalysis(null);
+    setInitialEditor(undefined);
+    setProjectId(null);
+    setFile(null);
+    setVideoUrl(null);
+    setMode("projects");
+    void loadProjects();
+  };
+
+  const cancelProcessing = async () => {
+    operationController.current?.abort();
+    operationController.current = null;
+    const activeId = activeProjectId.current;
+    setMode("projects");
+    if (activeId) {
+      await fetch(`/api/projects/${encodeURIComponent(activeId)}/cancel`, { method: "POST" }).catch(() => undefined);
+    }
+    await loadProjects();
+  };
+
+  if (sessionState === "loading") return <main className="app-loading"><BrandMark /><LoaderCircle className="spin" size={24} /><span>Opening private workspace</span></main>;
+  if (sessionState === "unauthenticated") return <SignInView />;
+
+  if (mode === "analyzing") return <AnalyzingView fileName={file?.name || title || "Sermon"} step={analysisStep} progress={analysisProgress} activeDetail={analysisDetail} onCancel={() => void cancelProcessing()} />;
+  if (mode === "projects") return <ProjectsView projects={projects} loading={projectsLoading} onNew={newProject} onOpen={(project) => void openProject(project)} onDelete={(project) => void removeProject(project)} onRefresh={() => void loadProjects()} onLogout={() => void import("@netlify/identity").then(async ({ logout }) => { await logout(); window.location.reload(); })} />;
+  if (mode === "editor" && analysis) return <EditorView analysis={analysis} projectId={projectId} initialEditor={initialEditor} initialExports={projects.find((project) => project.id === projectId)?.exports} videoUrl={videoUrl} onBack={showProjects} onNew={newProject} />;
   return (
     <WelcomeView
       mode={mode}
       file={file}
       title={title}
       duration={duration}
+      targetDuration={targetDuration}
       error={error}
       onFile={chooseFile}
       onTitle={setTitle}
+      onTargetDuration={setTargetDuration}
       onAnalyze={analyze}
       onClear={clearFile}
       onSample={openSample}

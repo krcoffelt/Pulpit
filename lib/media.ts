@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 import OpenAI from "openai";
-import type { AspectRatio, CaptionPreset, CaptionPosition, ClipSuggestion, FrameMode, TranscriptSegment } from "./types";
+import type { AspectRatio, CaptionPreset, CaptionPosition, FrameMode, TranscriptSegment } from "./types";
 
 const execFileAsync = promisify(execFile);
 
@@ -38,13 +38,52 @@ export async function getDuration(inputPath: string) {
   return duration;
 }
 
+export async function hasVideoStream(inputPath: string) {
+  const binary = requireBinary(ffprobeStatic.path, "FFprobe");
+  const { stdout } = await run(binary, [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=codec_type",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    inputPath,
+  ]);
+  return stdout.trim() === "video";
+}
+
 export interface AudioChunk {
   path: string;
   duration: number;
   offset: number;
 }
 
-export async function extractAudioChunks(inputPath: string, workDir: string, segmentSeconds = 360) {
+export function splitTimedTranscriptSegment(segment: TranscriptSegment, maxWords = 12) {
+  const words = segment.text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords || segment.end - segment.start <= 2) return [segment];
+  const groups: string[][] = [];
+  let current: string[] = [];
+  for (const word of words) {
+    current.push(word);
+    const sentenceEnd = /[.!?][”"']?$/.test(word);
+    if (current.length >= maxWords || (current.length >= 5 && sentenceEnd)) {
+      groups.push(current);
+      current = [];
+    }
+  }
+  if (current.length) {
+    if (current.length < 4 && groups.length) groups.at(-1)?.push(...current);
+    else groups.push(current);
+  }
+  const duration = Math.max(0.1, segment.end - segment.start);
+  let consumedWords = 0;
+  return groups.map((group, index) => {
+    const start = segment.start + duration * (consumedWords / words.length);
+    consumedWords += group.length;
+    const end = segment.start + duration * (consumedWords / words.length);
+    return { ...segment, id: `${segment.id}-${index}`, start, end, text: group.join(" ") };
+  });
+}
+
+export async function extractAudioChunks(inputPath: string, workDir: string, segmentSeconds = 180) {
   const binary = requireBinary(ffmpegPath, "FFmpeg");
   const chunkPattern = path.join(workDir, "chunk-%03d.mp3");
   await run(binary, [
@@ -86,24 +125,24 @@ export async function transcribeAudioChunk(chunk: AudioChunk, chunkIndex: number
   if (response.segments?.length) {
     return response.segments.flatMap((segment, segmentIndex) => {
       if (!segment.text.trim()) return [];
-      return [{
+      return splitTimedTranscriptSegment({
         id: `s-${chunkIndex}-${segmentIndex}`,
         start: chunk.offset + Number(segment.start),
         end: chunk.offset + Number(segment.end),
         text: segment.text.trim(),
         speaker: segment.speaker || "Speaker",
-      } satisfies TranscriptSegment];
+      } satisfies TranscriptSegment);
     });
   }
 
   if (response.text?.trim()) {
-    return [{
+    return splitTimedTranscriptSegment({
       id: `s-${chunkIndex}-0`,
       start: chunk.offset,
       end: chunk.offset + chunk.duration,
       text: response.text.trim(),
       speaker: "Speaker",
-    } satisfies TranscriptSegment];
+    } satisfies TranscriptSegment);
   }
 
   return [];
@@ -122,100 +161,6 @@ export async function transcribeSermon(inputPath: string, openai: OpenAI) {
     return segments;
   } finally {
     await rm(workDir, { recursive: true, force: true });
-  }
-}
-
-function fallbackClips(segments: TranscriptSegment[]): ClipSuggestion[] {
-  if (!segments.length) return [];
-  const candidates: ClipSuggestion[] = [];
-
-  for (let index = 0; index < segments.length && candidates.length < 6; index += Math.max(1, Math.floor(segments.length / 8))) {
-    const start = segments[index].start;
-    let endIndex = index;
-    while (endIndex < segments.length - 1 && segments[endIndex].end - start < 24) endIndex += 1;
-    const chosen = segments.slice(index, endIndex + 1);
-    const text = chosen.map((segment) => segment.text).join(" ");
-    if (text.split(/\s+/).length < 12) continue;
-    candidates.push({
-      id: `clip-${candidates.length + 1}`,
-      title: text.split(/\s+/).slice(0, 7).join(" ").replace(/[.,!?]$/, ""),
-      start,
-      end: Math.min(chosen.at(-1)?.end || start + 30, start + 60),
-      hook: chosen[0].text,
-      score: 82 - candidates.length * 3,
-      reason: "A complete, self-contained section with clear spoken context.",
-      platform: "Reels · Shorts",
-    });
-  }
-  return candidates;
-}
-
-export async function findBestClips(segments: TranscriptSegment[], openai: OpenAI) {
-  if (!segments.length) return [];
-  const transcript = segments
-    .map((segment) => `[${segment.start.toFixed(1)}-${segment.end.toFixed(1)}] ${segment.text}`)
-    .join("\n");
-
-  const response = await openai.responses.create({
-    model: process.env.OPENAI_ANALYSIS_MODEL || "gpt-5.6-luna",
-    reasoning: { effort: "low" },
-    input: [
-      {
-        role: "system",
-        content: "You are a senior short-form video editor specializing in sermons. Find emotionally complete moments with an immediate hook, clear context, and a satisfying landing. Never invent words or timestamps. Favor clips between 15 and 45 seconds; never exceed 60 seconds.",
-      },
-      {
-        role: "user",
-        content: `Select the six strongest social clips from this timestamped transcript. Return title, exact start/end timestamps, spoken hook, score from 1-100, why it works, and recommended platform.\n\n${transcript}`,
-      },
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        name: "sermon_clips",
-        strict: true,
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["clips"],
-          properties: {
-            clips: {
-              type: "array",
-              minItems: 1,
-              maxItems: 6,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["title", "start", "end", "hook", "score", "reason", "platform"],
-                properties: {
-                  title: { type: "string" },
-                  start: { type: "number" },
-                  end: { type: "number" },
-                  hook: { type: "string" },
-                  score: { type: "number" },
-                  reason: { type: "string" },
-                  platform: { type: "string" },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-
-  try {
-    const parsed = JSON.parse(response.output_text) as { clips: Omit<ClipSuggestion, "id">[] };
-    return parsed.clips
-      .filter((clip) => clip.end > clip.start && clip.start >= 0)
-      .map((clip, index) => ({
-        ...clip,
-        id: `clip-${index + 1}`,
-        end: Math.min(clip.end, clip.start + 60),
-        score: Math.max(1, Math.min(100, Math.round(clip.score))),
-      }));
-  } catch {
-    return fallbackClips(segments);
   }
 }
 
@@ -256,7 +201,10 @@ interface RenderClipOptions {
   captionsEnabled: boolean;
   highlight: boolean;
   frameMode: FrameMode;
+  frameX: number;
+  frameY: number;
   transcript: TranscriptSegment[];
+  audioOnly?: boolean;
 }
 
 export async function renderClip(options: RenderClipOptions) {
@@ -299,12 +247,16 @@ export async function renderClip(options: RenderClipOptions) {
 
   const escapedSubtitles = options.subtitlePath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
   const captionFilter = options.captionsEnabled ? `,ass='${escapedSubtitles}'` : "";
+  const frameX = Math.max(0, Math.min(1, 0.5 + options.frameX / 200)).toFixed(3);
+  const frameY = Math.max(0, Math.min(1, 0.5 + options.frameY / 200)).toFixed(3);
   let filter: string;
 
-  if (options.frameMode === "fit") {
-    filter = `[0:v]split=2[bg][fg];[bg]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=32[back];[fg]scale=${width}:${height}:force_original_aspect_ratio=decrease[front];[back][front]overlay=(W-w)/2:(H-h)/2${captionFilter}[v]`;
+  if (options.audioOnly) {
+    filter = `color=c=0x111113:s=${width}x${height}:r=30:d=${Math.max(0.5, options.end - options.start)}${captionFilter}[v]`;
+  } else if (options.frameMode === "fit") {
+    filter = `[0:v]split=2[bg][fg];[bg]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='(iw-ow)*${frameX}':y='(ih-oh)*${frameY}',gblur=sigma=32[back];[fg]scale=${width}:${height}:force_original_aspect_ratio=decrease[front];[back][front]overlay=x='(W-w)*${frameX}':y='(H-h)*${frameY}'${captionFilter}[v]`;
   } else {
-    filter = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}${captionFilter}[v]`;
+    filter = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='(iw-ow)*${frameX}':y='(ih-oh)*${frameY}'${captionFilter}[v]`;
   }
 
   await run(binary, [

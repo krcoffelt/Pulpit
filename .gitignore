@@ -9,3 +9,6 @@ exports
 output
 tmp
 *.tsbuildinfo
+test-results
+playwright-report
+blob-report

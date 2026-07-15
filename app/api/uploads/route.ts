@@ -1,7 +1,10 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getJobJson, JOB_ID_PATTERN, jobKey, putJobBytes, putJobJson } from "@/lib/job-storage";
+import { apiError, createRequestId, requireTrustedMutation } from "@/lib/api";
+import { requireCircumvisionUser } from "@/lib/auth";
+import { projectSourcePartKey, recordUploadedPart, requireProject, validateMediaSignature } from "@/lib/projects";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { putJobBytes } from "@/lib/job-storage";
 import { MAX_UPLOAD_PARTS, UPLOAD_PART_BYTES } from "@/lib/upload";
 
 export const runtime = "nodejs";
@@ -9,27 +12,31 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 const headersSchema = z.object({
-  jobId: z.string().regex(JOB_ID_PATTERN),
+  projectId: z.string().regex(/^job-[a-f0-9-]{36}$/),
   chunkIndex: z.coerce.number().int().nonnegative(),
   totalChunks: z.coerce.number().int().positive().max(MAX_UPLOAD_PARTS),
 });
 
-interface UploadManifest {
-  jobId: string;
-  totalChunks: number;
-  createdAt: number;
-  updatedAt: number;
-}
-
 export async function POST(request: Request) {
-  const requestId = randomUUID().slice(0, 8);
+  const requestId = createRequestId();
   try {
+    requireTrustedMutation(request);
+    const user = await requireCircumvisionUser();
+    await enforceRateLimit(user.id, "upload-part", 1_000, 60 * 60 * 1000);
     const input = headersSchema.parse({
-      jobId: request.headers.get("x-upload-id"),
+      projectId: request.headers.get("x-project-id") || request.headers.get("x-upload-id"),
       chunkIndex: request.headers.get("x-chunk-index"),
       totalChunks: request.headers.get("x-total-chunks"),
     });
     if (input.chunkIndex >= input.totalChunks) throw new Error("The upload section number is invalid.");
+
+    const project = await requireProject(user.id, input.projectId);
+    if (project.status === "cancelled") {
+      return NextResponse.json({ error: "This upload was cancelled.", requestId }, { status: 409 });
+    }
+    if (project.source.totalParts !== input.totalChunks) {
+      return NextResponse.json({ error: "The upload section count changed. Create a new project.", requestId }, { status: 409 });
+    }
 
     const contentLength = Number(request.headers.get("content-length") || 0);
     if (contentLength > UPLOAD_PART_BYTES) {
@@ -41,27 +48,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "This upload section is empty or too large.", requestId }, { status: 400 });
     }
 
-    const uploadKey = jobKey(input.jobId, "upload.json");
-    const existing = await getJobJson<UploadManifest>(uploadKey);
-    if (existing && existing.totalChunks !== input.totalChunks) {
-      return NextResponse.json({ error: "The upload section count changed. Start the upload again.", requestId }, { status: 409 });
+    const expectedBytes = Math.min(
+      UPLOAD_PART_BYTES,
+      project.source.fileSize - input.chunkIndex * UPLOAD_PART_BYTES,
+    );
+    if (body.byteLength !== expectedBytes) {
+      return NextResponse.json({ error: "This upload section is incomplete.", requestId }, { status: 400 });
     }
+    if (input.chunkIndex === 0) validateMediaSignature(new Uint8Array(body), project.source.fileName);
 
-    await putJobBytes(jobKey(input.jobId, `uploads/part-${String(input.chunkIndex).padStart(4, "0")}`), body);
-    await putJobJson(uploadKey, {
-      jobId: input.jobId,
+    await putJobBytes(projectSourcePartKey(input.projectId, input.chunkIndex), body);
+    const updated = await recordUploadedPart(user.id, input.projectId, input.chunkIndex);
+
+    return NextResponse.json({
+      ok: true,
+      chunkIndex: input.chunkIndex,
       totalChunks: input.totalChunks,
-      createdAt: existing?.createdAt || Date.now(),
-      updatedAt: Date.now(),
-    } satisfies UploadManifest);
-
-    return NextResponse.json({ ok: true, chunkIndex: input.chunkIndex, totalChunks: input.totalChunks, requestId });
+      uploadedParts: updated.source.uploadedParts,
+      requestId,
+    });
   } catch (error) {
-    const validationError = error instanceof z.ZodError;
-    const message = validationError
-      ? error.issues[0]?.message || "The upload section was invalid."
-      : error instanceof Error ? error.message : "The upload section could not be stored.";
-    console.error("[api/uploads] failed", { requestId, message, error });
-    return NextResponse.json({ error: message, requestId }, { status: validationError ? 400 : 500 });
+    return apiError(error, requestId, "The upload section could not be stored.", error instanceof z.ZodError);
   }
 }

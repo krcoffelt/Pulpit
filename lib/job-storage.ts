@@ -3,19 +3,29 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const STORE_NAME = "circumvision-analysis";
 const LOCAL_ROOT = path.join(tmpdir(), "circumvision-analysis-storage");
 
 export const JOB_ID_PATTERN = /^job-[a-zA-Z0-9_-]+$/;
 
-function usesNetlifyBlobs() {
+export function usesNetlifyBlobs() {
   return process.env.NETLIFY === "true"
     || Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
+    || Boolean(process.env.CIRCUMVISION_BLOB_SITE_ID && process.env.CIRCUMVISION_BLOB_TOKEN)
     || typeof globalThis.netlifyBlobsContext === "string";
 }
 
 function blobStore() {
-  return getStore({ name: STORE_NAME, consistency: "strong" });
+  const context = process.env.CONTEXT;
+  const deploySuffix = (process.env.DEPLOY_ID || process.env.BRANCH || "nonproduction")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .slice(0, 40);
+  const name = context && context !== "production" ? `circumvision-${deploySuffix}` : "circumvision";
+  const siteID = process.env.CIRCUMVISION_BLOB_SITE_ID;
+  const token = process.env.CIRCUMVISION_BLOB_TOKEN;
+  return siteID && token
+    ? getStore({ name, consistency: "strong", siteID, token })
+    : getStore({ name, consistency: "strong" });
 }
 
 function assertSafeKey(key: string) {
@@ -133,4 +143,26 @@ export async function deleteJobPath(jobId: string, relativePrefix = "") {
   for (let index = 0; index < keys.length; index += 20) {
     await Promise.all(keys.slice(index, index + 20).map((key) => blobStore().delete(key)));
   }
+}
+
+export async function deleteStoragePrefix(prefix: string) {
+  assertSafeKey(prefix);
+  if (!usesNetlifyBlobs()) {
+    await rm(localPath(prefix), { recursive: true, force: true });
+    return;
+  }
+
+  const keys = await listJobKeys(prefix);
+  for (let index = 0; index < keys.length; index += 20) {
+    await Promise.all(keys.slice(index, index + 20).map((key) => blobStore().delete(key)));
+  }
+}
+
+export async function deleteStorageKey(key: string) {
+  assertSafeKey(key);
+  if (usesNetlifyBlobs()) {
+    await blobStore().delete(key);
+    return;
+  }
+  await rm(localPath(key), { force: true });
 }
