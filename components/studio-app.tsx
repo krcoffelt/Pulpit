@@ -543,31 +543,6 @@ function SignInView() {
   );
 }
 
-function AccessDeniedView() {
-  const [busy, setBusy] = useState(false);
-
-  const signOut = async () => {
-    setBusy(true);
-    const { logout } = await import("@netlify/identity");
-    await logout().catch(() => undefined);
-    window.location.reload();
-  };
-
-  return (
-    <main className="auth-shell">
-      <header className="welcome-nav"><BrandMark /></header>
-      <section className="auth-panel">
-        <p className="eyebrow"><span>PRIVATE WORKSPACE</span><i /> INVITE REQUIRED</p>
-        <h1>This account isn&apos;t<br /><em>on the list.</em></h1>
-        <p>Circumvision only accepts accounts invited by the workspace owner. Ask for an invitation, then sign in with that email.</p>
-        <button className="primary-button" disabled={busy} onClick={signOut}>
-          {busy ? <LoaderCircle className="spin" size={17} /> : <LogOut size={17} />} {busy ? "Signing out…" : "Sign out and use another account"}
-        </button>
-      </section>
-    </main>
-  );
-}
-
 function ProjectsView({
   projects,
   loading,
@@ -1290,7 +1265,7 @@ function EditorView({
 
 export function StudioApp() {
   const [mode, setMode] = useState<AppMode>("welcome");
-  const [sessionState, setSessionState] = useState<"loading" | "authenticated" | "unauthenticated" | "unauthorized">("loading");
+  const [sessionState, setSessionState] = useState<"loading" | "authenticated" | "unauthenticated">("loading");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [file, setFile] = useState<File | null>(null);
@@ -1324,15 +1299,10 @@ export function StudioApp() {
     void (async () => {
       try {
         const sessionResponse = await fetch("/api/session", { cache: "no-store" });
-        const session = await readApiPayload<{ authenticated: boolean; authorized: boolean }>(sessionResponse, "Loading session");
+        const session = await readApiPayload<{ authenticated: boolean }>(sessionResponse, "Loading session");
         if (!active) return;
         if (!session.authenticated) {
           setSessionState("unauthenticated");
-          setProjectsLoading(false);
-          return;
-        }
-        if (!session.authorized) {
-          setSessionState("unauthorized");
           setProjectsLoading(false);
           return;
         }
@@ -1611,7 +1581,6 @@ export function StudioApp() {
 
   if (sessionState === "loading") return <main className="app-loading"><BrandMark /><LoaderCircle className="spin" size={24} /><span>Opening private workspace</span></main>;
   if (sessionState === "unauthenticated") return <SignInView />;
-  if (sessionState === "unauthorized") return <AccessDeniedView />;
 
   if (mode === "analyzing") return <AnalyzingView fileName={file?.name || title || "Sermon"} step={analysisStep} progress={analysisProgress} activeDetail={analysisDetail} onCancel={() => void cancelProcessing()} />;
   if (mode === "projects") return <ProjectsView projects={projects} loading={projectsLoading} onNew={newProject} onOpen={(project) => void openProject(project)} onDelete={(project) => void removeProject(project)} onRefresh={() => void loadProjects()} onLogout={() => void import("@netlify/identity").then(async ({ logout }) => { await logout(); window.location.reload(); })} />;

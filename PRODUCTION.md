@@ -12,7 +12,7 @@
 
 The application denies project, media, processing, and export access unless the Netlify Identity JWT belongs to the project owner. Local development intentionally uses one isolated `local-user` account.
 
-Circumvision verifies that Netlify Identity registration remains **Invite only** before admitting a confirmed account. Accepted invitees receive the `circumvision` role from the Identity signup event, while non-invited signup events are denied. Accounts with an explicit `circumvision`/`admin` role remain authorized, and open registration fails closed. Set `CIRCUMVISION_OWNER_EMAILS` to the minimal set of workspace-owner emails; for an additional restrictive allowlist, set `CIRCUMVISION_ALLOWED_EMAILS`.
+Circumvision uses one authorization rule: a valid Netlify Identity session can access the workspace. Keep Netlify Identity registration set to **Invite only** so accounts can only be created from invitations. The application does not duplicate Netlify's invitation state or require separate app roles.
 
 Invitation links open Circumvision's built-in password-creation screen. The sign-in screen also includes password recovery; recovery links open an authenticated new-password form before entering the workspace. Users should never share their password with an operator or support agent.
 
