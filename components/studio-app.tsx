@@ -385,89 +385,42 @@ function AnalyzingView({ fileName, step, progress, activeDetail, onCancel }: { f
   );
 }
 
-type AuthFlow = "login" | "processing";
-
-function createManagedIdentityPassword() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return `${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}Aa1!`;
-}
-
 function SignInView() {
   const [email, setEmail] = useState("");
-  const [flow, setFlow] = useState<AuthFlow>("login");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
 
-  useEffect(() => {
-    let active = true;
-    let processing = false;
-    const hasAuthCallback = () => /^#(confirmation_token|recovery_token|invite_token|email_change_token|access_token)=/.test(window.location.hash);
-    const processAuthCallback = async () => {
-      if (!hasAuthCallback() || processing) return;
-      processing = true;
-      setFlow("processing");
-      try {
-        const identity = await import("@netlify/identity");
-        if (!active) return;
-        const result = await identity.handleAuthCallback();
-        if (!active) return;
-        if (result?.type === "invite" && result.token) {
-          await identity.acceptInvite(result.token, createManagedIdentityPassword());
-        }
-        if (result?.type === "recovery") {
-          await identity.updateUser({ password: createManagedIdentityPassword() });
-        }
-        window.location.replace("/");
-      } catch (caught) {
-        if (!active) return;
-        setError(caught instanceof Error ? caught.message : "The sign-in link could not be completed.");
-        setFlow("login");
-        processing = false;
-      }
-    };
-    const onHashChange = () => { void processAuthCallback(); };
-    void processAuthCallback();
-    window.addEventListener("hashchange", onHashChange);
-    return () => {
-      active = false;
-      window.removeEventListener("hashchange", onHashChange);
-    };
-  }, []);
-
-  const sendSignInLink = async (event: React.FormEvent) => {
+  const enterWorkspace = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError("");
-    setNotice("");
     try {
-      const { requestPasswordRecovery } = await import("@netlify/identity");
-      await requestPasswordRecovery(email.trim());
-      setNotice("Check your email and open the secure link to enter Circumvision. No password needed.");
+      const response = await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const payload = await readApiPayload<{ authenticated: boolean }>(response, "Opening workspace");
+      if (!response.ok || !payload.authenticated) throw new Error(payload.error || "The workspace could not be opened.");
+      window.location.reload();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The secure sign-in email could not be sent.");
+      setError(caught instanceof Error ? caught.message : "The workspace could not be opened.");
     } finally {
       setBusy(false);
     }
   };
 
-  if (flow === "processing") {
-    return <main className="app-loading"><BrandMark /><LoaderCircle className="spin" size={24} /><span>Verifying your secure link</span></main>;
-  }
-
   return (
     <main className="auth-shell">
       <header className="welcome-nav"><BrandMark /></header>
       <section className="auth-panel">
-        <p className="eyebrow"><span>PRIVATE WORKSPACE</span><i /> TYSHONE ROLAND</p>
-        <h1>Sign in with<br /><em>one click.</em></h1>
-        <p>Enter your invited email and we&apos;ll send a secure sign-in link. No password to create or remember.</p>
-        <form onSubmit={sendSignInLink}>
+        <p className="eyebrow"><span>OPEN WORKSPACE</span><i /> ANY EMAIL</p>
+        <h1>Enter your email.<br /><em>That&apos;s it.</em></h1>
+        <p>No password, invitation, or email link. We&apos;ll remember this device and take you straight to the shared Circumvision workspace.</p>
+        <form onSubmit={enterWorkspace}>
           <label><span>Email</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
           {error && <div className="form-error"><Info size={15} /> {error}</div>}
-          {notice && <div className="form-success"><Check size={15} /> {notice}</div>}
-          <button className="primary-button" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Scissors size={17} />} {busy ? "Sending link…" : "Email me a sign-in link"}</button>
+          <button className="primary-button" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Scissors size={17} />} {busy ? "Opening…" : "Enter Circumvision"}</button>
         </form>
       </section>
     </main>
@@ -496,9 +449,9 @@ function ProjectsView({
       <header className="welcome-nav">
         <BrandMark />
         <div className="welcome-nav-meta">
-          <span className="status-dot"><i /> Private workspace</span>
+          <span className="status-dot"><i /> Shared workspace</span>
           <button className="icon-button" onClick={onRefresh} aria-label="Refresh projects"><RotateCcw size={17} /></button>
-          <button className="icon-button" onClick={onLogout} aria-label="Sign out"><LogOut size={17} /></button>
+          <button className="icon-button" onClick={onLogout} aria-label="Switch email"><LogOut size={17} /></button>
           <span className="avatar">TR</span>
         </div>
       </header>
@@ -1510,11 +1463,11 @@ export function StudioApp() {
     await loadProjects();
   };
 
-  if (sessionState === "loading") return <main className="app-loading"><BrandMark /><LoaderCircle className="spin" size={24} /><span>Opening private workspace</span></main>;
+  if (sessionState === "loading") return <main className="app-loading"><BrandMark /><LoaderCircle className="spin" size={24} /><span>Opening workspace</span></main>;
   if (sessionState === "unauthenticated") return <SignInView />;
 
   if (mode === "analyzing") return <AnalyzingView fileName={file?.name || title || "Sermon"} step={analysisStep} progress={analysisProgress} activeDetail={analysisDetail} onCancel={() => void cancelProcessing()} />;
-  if (mode === "projects") return <ProjectsView projects={projects} loading={projectsLoading} onNew={newProject} onOpen={(project) => void openProject(project)} onDelete={(project) => void removeProject(project)} onRefresh={() => void loadProjects()} onLogout={() => void import("@netlify/identity").then(async ({ logout }) => { await logout(); window.location.reload(); })} />;
+  if (mode === "projects") return <ProjectsView projects={projects} loading={projectsLoading} onNew={newProject} onOpen={(project) => void openProject(project)} onDelete={(project) => void removeProject(project)} onRefresh={() => void loadProjects()} onLogout={() => void fetch("/api/session", { method: "DELETE" }).then(() => window.location.reload())} />;
   if (mode === "editor" && analysis) return <EditorView analysis={analysis} projectId={projectId} initialEditor={initialEditor} initialExports={projects.find((project) => project.id === projectId)?.exports} videoUrl={videoUrl} onBack={showProjects} onNew={newProject} />;
   return (
     <WelcomeView

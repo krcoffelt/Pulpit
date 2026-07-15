@@ -1,5 +1,23 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ request, context }) => {
+  const email = "browser-tests@circumvision.test";
+  expect((await request.post("/api/session", { data: { email } })).status()).toBe(200);
+  expect((await context.request.post("/api/session", { data: { email } })).status()).toBe(200);
+});
+
+test("any email opens the workspace immediately and remains signed in", async ({ page }) => {
+  await page.context().clearCookies();
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Enter your email. That's it." })).toBeVisible();
+  await page.getByLabel("Email").fill("Anybody@Example.com");
+  await page.getByRole("button", { name: "Enter Circumvision" }).click();
+  await expect(page.getByText("Trim the sermon.").or(page.getByRole("heading", { name: "Sermon workspace" }))).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Trim the sermon.").or(page.getByRole("heading", { name: "Sermon workspace" }))).toBeVisible();
+  await expect(page.getByRole("button", { name: "Enter Circumvision" })).toHaveCount(0);
+});
+
 test("creates, resumes, and deletes a sectioned project through protected APIs", async ({ request }) => {
   const source = Buffer.alloc(256);
   source.writeUInt32BE(24, 0);

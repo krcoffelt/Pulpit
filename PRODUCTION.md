@@ -3,18 +3,13 @@
 ## Required Netlify setup
 
 1. Link the repository `krcoffelt/Pulpit` to the production site.
-2. In **Project configuration → Identity**, enable Netlify Identity.
-3. Set registration to **Invite only**. Do not enable open signup.
-4. Invite Tyshone Roland's email, then open the invitation link to activate passwordless access.
-5. Add `OPENAI_API_KEY` as a secret environment variable for the Production deploy context.
-6. Set `NEXT_PUBLIC_APP_URL=https://circumvision.netlify.app` (or the final custom domain).
-7. Keep the model defaults from `.env.example` unless a tested migration deliberately changes them.
+2. Add `OPENAI_API_KEY` as a secret environment variable for the Production deploy context.
+3. Set `NEXT_PUBLIC_APP_URL=https://circumvision.netlify.app` (or the final custom domain).
+4. Keep the model defaults from `.env.example` unless a tested migration deliberately changes them.
 
-The application denies project, media, processing, and export access unless the request includes a valid Netlify Identity JWT. Local development intentionally uses one isolated `local-user` account.
+Netlify Identity is not used. Entering any syntactically valid email immediately creates a one-year, HTTP-only browser cookie; no password, invitation, verification message, or email callback exists. Every admitted email opens the same shared workspace, including projects created under earlier Identity owner IDs.
 
-Circumvision uses one authorization rule: a valid Netlify Identity session can access the workspace. Keep Netlify Identity registration set to **Invite only** so accounts can only be created from invitations. The application does not duplicate Netlify's invitation state or require separate app roles.
-
-Circumvision is passwordless for users. Invitation links silently create a strong managed credential, and the sign-in screen emails a one-time recovery link that rotates that credential before entering the workspace. Users never create, remember, or share a password.
+This flow prioritizes convenience over identity verification. Anyone who can reach the public site can enter an email and access, modify, download, or delete shared projects. The cookie gates accidental unauthenticated requests but is not proof of identity. Reintroduce verified authentication before storing media that should not be publicly accessible to site visitors.
 
 ## Media architecture
 
@@ -23,7 +18,7 @@ Circumvision is passwordless for users. Invitation links silently create a stron
 - Production analysis and rendering run in token-protected Netlify background functions rather than a browser-held request.
 - Each transcript section is checkpointed. If a background function stops, reopening a stale/failed project retries from the first unfinished section.
 - Rendering assembles the retained source inside the background function. Exporting another ratio never asks for the source again.
-- Finished files are downloaded through authenticated 3 MB byte ranges, avoiding response-size ceilings.
+- Finished files are downloaded through session-gated 3 MB byte ranges, avoiding response-size ceilings.
 - Production data uses the `circumvision` Blob store. Branch/deploy previews use isolated stores and cannot mutate production sermons.
 
 Netlify background functions have a finite execution window. The current three-minute audio segmentation is designed for the required 35–40 minute sermons and retries safely from checkpoints. If actual sermons regularly exceed that window, point the existing project/storage/job interfaces at a long-running media worker (for example, a container queue worker) rather than moving FFmpeg back into synchronous web requests.
@@ -36,7 +31,7 @@ For that external-worker mode, set `CIRCUMVISION_WORKER_URL` and `CIRCUMVISION_W
 - Every failure response is JSON and includes a request ID. Background and API logs use structured metadata without transcript or sermon body content.
 - A daily scheduled function marks abandoned jobs retryable, removes expired rate buckets, and deletes failed/cancelled or abandoned-upload projects according to the documented retention variables.
 - Successful project source media and exports remain until the owner deletes the project. The workspace enforces a 5 GB quota and 100-project limit.
-- Upload, processing, suggestion, and export creation endpoints are authenticated, owner-scoped, rate-limited, origin-checked, and validated.
+- Upload, processing, suggestion, and export creation endpoints require the remembered workspace cookie and remain rate-limited, origin-checked, and validated.
 
 ## Verification before release
 
@@ -51,7 +46,7 @@ npx netlify build
 After deployment:
 
 1. Open `/api/health` and confirm `status: ok`, `persistence: ok`, and `storage: durable`.
-2. Sign in through an invited account.
+2. Enter any valid email, confirm no email is sent, refresh, and confirm the remembered session opens immediately.
 3. Upload a small MP4 and confirm analysis, editing, all three ratios, and download.
 4. Upload the 119 MB iPhone MOV and confirm progress, pause/resume, refresh, captions, and H.264/AAC output.
 5. Run the 200+ MB / 35–40 minute sermon and confirm transcript checkpoints and non-overlapping suggestions.

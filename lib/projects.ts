@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_PARTS, UPLOAD_PART_BYTES } from "./upload";
 import { PublicError } from "./public-error";
+import { OPEN_WORKSPACE_OWNER_ID } from "./workspace";
 
 export const PROJECT_ID_PATTERN = /^job-[a-f0-9-]{36}$/;
 export const ALLOWED_MEDIA_EXTENSIONS = new Set(["mp4", "mov", "webm", "mp3", "m4a", "wav"]);
@@ -116,7 +117,12 @@ export async function createProject(input: {
 }
 
 export async function getProject(ownerId: string, projectId: string) {
-  return getJobJson<CircumvisionProject>(projectKey(ownerId, projectId));
+  const direct = await getJobJson<CircumvisionProject>(projectKey(ownerId, projectId));
+  if (direct || ownerId !== OPEN_WORKSPACE_OWNER_ID) return direct;
+
+  const suffix = `/projects/${projectId}.json`;
+  const legacyKey = (await listJobKeys("owners/")).find((key) => key.endsWith(suffix));
+  return legacyKey ? getJobJson<CircumvisionProject>(legacyKey) : null;
 }
 
 export async function requireProject(ownerId: string, projectId: string) {
@@ -167,8 +173,11 @@ export async function recordUploadedPart(ownerId: string, projectId: string, par
 
 export async function listProjects(ownerId: string): Promise<ProjectSummary[]> {
   assertOwnerId(ownerId);
-  const prefix = `owners/${ownerId}/projects/`;
-  const keys = (await listJobKeys(prefix)).filter((key) => key.endsWith(".json"));
+  const sharedWorkspace = ownerId === OPEN_WORKSPACE_OWNER_ID;
+  const prefix = sharedWorkspace ? "owners/" : `owners/${ownerId}/projects/`;
+  const keys = (await listJobKeys(prefix)).filter((key) => sharedWorkspace
+    ? /^owners\/[a-zA-Z0-9_-]+\/projects\/job-[a-f0-9-]{36}\.json$/.test(key)
+    : key.endsWith(".json"));
   const projects = (await Promise.all(keys.map((key) => getJobJson<CircumvisionProject>(key))))
     .filter((project): project is CircumvisionProject => Boolean(project));
 
@@ -185,10 +194,10 @@ export async function listProjects(ownerId: string): Promise<ProjectSummary[]> {
 }
 
 export async function deleteProject(ownerId: string, projectId: string) {
-  await requireProject(ownerId, projectId);
+  const project = await requireProject(ownerId, projectId);
   await Promise.all([
     deleteJobPath(projectId),
-    deleteStorageKey(projectKey(ownerId, projectId)),
+    deleteStorageKey(projectKey(project.ownerId, projectId)),
   ]);
 }
 
