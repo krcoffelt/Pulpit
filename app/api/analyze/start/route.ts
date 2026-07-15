@@ -1,12 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { createAnalysisJob, removeAnalysisJob } from "@/lib/analysis-jobs";
+import { z } from "zod";
+import { createAnalysisJobFromUpload, removeAnalysisJob } from "@/lib/analysis-jobs";
+import { JOB_ID_PATTERN } from "@/lib/job-storage";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_PARTS, UPLOAD_PART_BYTES } from "@/lib/upload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
-const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+const requestSchema = z.object({
+  jobId: z.string().regex(JOB_ID_PATTERN),
+  title: z.string().trim().max(180),
+  fileName: z.string().trim().min(1).max(255),
+  fileSize: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+  totalChunks: z.number().int().positive().max(MAX_UPLOAD_PARTS),
+});
 
 function friendlyTitle(filename: string) {
   return filename
@@ -22,24 +31,26 @@ export async function POST(request: Request) {
   }
 
   try {
-    const form = await request.formData();
-    const file = form.get("file");
-    const suppliedTitle = String(form.get("title") || "").trim().slice(0, 180);
-    if (!(file instanceof File) || file.size === 0) {
-      return NextResponse.json({ error: "Choose a video or audio file to analyze.", requestId }, { status: 400 });
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      return NextResponse.json({ error: "This local build accepts files up to 2 GB.", requestId }, { status: 413 });
+    const input = requestSchema.parse(await request.json());
+    const expectedChunks = Math.ceil(input.fileSize / UPLOAD_PART_BYTES);
+    if (input.totalChunks !== expectedChunks) {
+      return NextResponse.json({ error: "The uploaded file section count is invalid.", requestId }, { status: 400 });
     }
 
-    console.info("[api/analyze/start] preparing media", { requestId, bytes: file.size, type: file.type || "unknown" });
-    const job = await createAnalysisJob(file, suppliedTitle || friendlyTitle(file.name));
+    console.info("[api/analyze/start] preparing media", { requestId, jobId: input.jobId, bytes: input.fileSize, chunks: input.totalChunks });
+    const job = await createAnalysisJobFromUpload({
+      ...input,
+      title: input.title || friendlyTitle(input.fileName),
+    });
     console.info("[api/analyze/start] ready", { requestId, jobId: job.jobId, duration: Math.round(job.duration), chunks: job.totalChunks });
     return NextResponse.json({ ...job, requestId }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "The sermon could not be prepared.";
+    const validationError = error instanceof z.ZodError;
+    const message = validationError
+      ? error.issues[0]?.message || "The upload details were invalid."
+      : error instanceof Error ? error.message : "The sermon could not be prepared.";
     console.error("[api/analyze/start] failed", { requestId, message, error });
-    return NextResponse.json({ error: `Preparing media failed: ${message}`, requestId }, { status: 500 });
+    return NextResponse.json({ error: `Preparing media failed: ${message}`, requestId }, { status: validationError ? 400 : 500 });
   }
 }
 

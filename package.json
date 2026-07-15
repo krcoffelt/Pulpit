@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@netlify/blobs": "^10.7.9",
     "ffmpeg-static": "latest",
     "ffprobe-static": "latest",
     "lucide-react": "latest",

@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 import { DEMO_ANALYSIS } from "@/lib/demo";
+import { UPLOAD_PART_BYTES } from "@/lib/upload";
 import type {
   AnalysisResult,
   AspectRatio,
@@ -74,12 +75,13 @@ type AnalysisJobStartPayload = {
 type AnalysisChunkPayload = {
   completedChunks: number;
   totalChunks: number;
+  completedDuration: number;
+  totalDuration: number;
   transcriptSegments: number;
 };
 
-async function readApiPayload<T extends object>(response: Response, action: string): Promise<T & ApiErrorPayload> {
-  const body = await response.text();
-  const status = response.status ? `HTTP ${response.status}` : "an unknown status";
+function parseApiPayload<T extends object>(body: string, responseStatus: number, action: string): T & ApiErrorPayload {
+  const status = responseStatus ? `HTTP ${responseStatus}` : "an unknown status";
 
   if (!body.trim()) {
     throw new Error(`${action} failed with ${status}, but the processor returned no details. Retry the analysis.`);
@@ -92,8 +94,88 @@ async function readApiPayload<T extends object>(response: Response, action: stri
     }
     return payload as T & ApiErrorPayload;
   } catch {
-    throw new Error(`${action} failed with ${status}, and the processor returned an unreadable response. Retry the analysis or restart the local server.`);
+    throw new Error(`${action} failed with ${status}, and the processor returned an unreadable response. Try again in a moment.`);
   }
+}
+
+async function readApiPayload<T extends object>(response: Response, action: string): Promise<T & ApiErrorPayload> {
+  return parseApiPayload<T>(await response.text(), response.status, action);
+}
+
+function uploadPart(
+  part: Blob,
+  jobId: string,
+  chunkIndex: number,
+  totalChunks: number,
+  onProgress: (uploadedBytes: number) => void,
+) {
+  return new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/uploads");
+    request.timeout = 60_000;
+    request.setRequestHeader("Content-Type", "application/octet-stream");
+    request.setRequestHeader("x-upload-id", jobId);
+    request.setRequestHeader("x-chunk-index", String(chunkIndex));
+    request.setRequestHeader("x-total-chunks", String(totalChunks));
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(event.loaded);
+      }
+    };
+    request.onerror = () => reject(new Error("The upload was interrupted. Check your connection and try again."));
+    request.onabort = () => reject(new Error("The upload was cancelled."));
+    request.ontimeout = () => reject(new Error("An upload section timed out. Retrying may help."));
+    request.onload = () => {
+      try {
+        const payload = parseApiPayload<ApiErrorPayload>(request.responseText, request.status, "Uploading media");
+        if (request.status < 200 || request.status >= 300) {
+          const suffix = payload.requestId ? ` Reference: ${payload.requestId}.` : "";
+          reject(new Error(`${payload.error || "An upload section could not be stored."}${suffix}`));
+          return;
+        }
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    };
+    request.send(part);
+  });
+}
+
+async function uploadFileInParts(file: File, jobId: string, onProgress: (progress: number) => void) {
+  const totalChunks = Math.ceil(file.size / UPLOAD_PART_BYTES);
+  let reportedProgress = 0;
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+    const start = chunkIndex * UPLOAD_PART_BYTES;
+    const end = Math.min(file.size, start + UPLOAD_PART_BYTES);
+    const part = file.slice(start, end);
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await uploadPart(part, jobId, chunkIndex, totalChunks, (partBytes) => {
+          reportedProgress = Math.max(reportedProgress, (start + partBytes) / file.size);
+          onProgress(reportedProgress);
+        });
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 450 * (attempt + 1)));
+      }
+    }
+
+    if (lastError) throw lastError;
+    reportedProgress = Math.max(reportedProgress, end / file.size);
+    onProgress(reportedProgress);
+  }
+
+  return totalChunks;
+}
+
+function createJobId() {
+  return `job-${crypto.randomUUID()}`;
 }
 
 function formatTime(totalSeconds: number, compact = false) {
@@ -251,6 +333,7 @@ function AnalyzingView({ fileName, step, progress, activeDetail }: { fileName: s
     { label: "Finding the hooks", detail: "Ranking complete, shareable moments" },
     { label: "Building your workspace", detail: "Preparing captions and formats" },
   ];
+  const displayedProgress = Math.max(0, Math.min(100, Math.round(progress)));
   return (
     <main className="analysis-screen">
       <header><BrandMark /><span>AI EDIT IN PROGRESS</span></header>
@@ -259,7 +342,20 @@ function AnalyzingView({ fileName, step, progress, activeDetail }: { fileName: s
         <p className="eyebrow">ANALYZING SERMON</p>
         <h1>Finding the moments<br />that <em>move people.</em></h1>
         <p className="analysis-file"><Film size={15} /> {fileName}</p>
-        <div className="analysis-progress"><i style={{ width: `${progress}%` }} /></div>
+        <div className="analysis-progress-meta">
+          <span>OVERALL PROGRESS</span>
+          <strong><b>{displayedProgress}</b>%</strong>
+        </div>
+        <div
+          className="analysis-progress"
+          role="progressbar"
+          aria-label="Sermon analysis progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={displayedProgress}
+        >
+          <i style={{ width: `${displayedProgress}%` }} />
+        </div>
         <div className="analysis-checklist">
           {steps.map((item, index) => (
             <div key={item.label} className={index < step ? "done" : index === step ? "active" : ""}>
@@ -724,8 +820,8 @@ export function StudioApp() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState("");
   const [analysisStep, setAnalysisStep] = useState(0);
-  const [analysisProgress, setAnalysisProgress] = useState(6);
-  const [analysisDetail, setAnalysisDetail] = useState("Uploading and compressing the sermon");
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [analysisDetail, setAnalysisDetail] = useState("Uploading sermon · 0% uploaded");
 
   useEffect(() => {
     return () => {
@@ -760,16 +856,32 @@ export function StudioApp() {
   const analyze = async () => {
     if (!file) return;
     setAnalysisStep(0);
-    setAnalysisProgress(6);
-    setAnalysisDetail("Uploading and compressing the sermon");
+    setAnalysisProgress(0);
+    setAnalysisDetail("Uploading sermon · 0% uploaded");
     setMode("analyzing");
     setError("");
     let activeJobId = "";
     try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("title", title);
-      const startResponse = await fetch("/api/analyze/start", { method: "POST", body: form });
+      activeJobId = createJobId();
+      const totalUploadChunks = await uploadFileInParts(file, activeJobId, (uploadProgress) => {
+        const uploadedPercent = Math.round(uploadProgress * 100);
+        setAnalysisProgress(Math.round(uploadProgress * 12));
+        setAnalysisDetail(`Uploading sermon · ${uploadedPercent}% uploaded`);
+      });
+      setAnalysisProgress(12);
+      setAnalysisDetail("Extracting and optimizing the audio track");
+
+      const startResponse = await fetch("/api/analyze/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: activeJobId,
+          title,
+          fileName: file.name,
+          fileSize: file.size,
+          totalChunks: totalUploadChunks,
+        }),
+      });
       const startPayload = await readApiPayload<AnalysisJobStartPayload>(startResponse, "Preparing media");
       if (!startResponse.ok) {
         const suffix = startPayload.requestId ? ` Reference: ${startPayload.requestId}.` : "";
@@ -778,7 +890,7 @@ export function StudioApp() {
 
       activeJobId = startPayload.jobId;
       setAnalysisStep(1);
-      setAnalysisProgress(16);
+      setAnalysisProgress(18);
 
       for (let chunkIndex = 0; chunkIndex < startPayload.totalChunks; chunkIndex += 1) {
         setAnalysisDetail(`Transcribing section ${chunkIndex + 1} of ${startPayload.totalChunks}`);
@@ -792,11 +904,14 @@ export function StudioApp() {
           const suffix = chunkPayload.requestId ? ` Reference: ${chunkPayload.requestId}.` : "";
           throw new Error(`${chunkPayload.error || "Part of the sermon could not be transcribed."}${suffix}`);
         }
-        setAnalysisProgress(16 + Math.round((chunkPayload.completedChunks / chunkPayload.totalChunks) * 62));
+        const transcriptProgress = chunkPayload.totalDuration > 0
+          ? chunkPayload.completedDuration / chunkPayload.totalDuration
+          : chunkPayload.completedChunks / chunkPayload.totalChunks;
+        setAnalysisProgress(18 + Math.round(Math.max(0, Math.min(1, transcriptProgress)) * 64));
       }
 
       setAnalysisStep(2);
-      setAnalysisProgress(84);
+      setAnalysisProgress(82);
       setAnalysisDetail("Ranking complete moments with strong hooks");
       const finishResponse = await fetch("/api/analyze/finish", {
         method: "POST",
@@ -811,11 +926,13 @@ export function StudioApp() {
       activeJobId = "";
       if (!payload.clips?.length) throw new Error("The transcript completed, but no complete clip moments were found.");
       setAnalysisStep(3);
-      setAnalysisProgress(100);
+      setAnalysisProgress(96);
       setAnalysisDetail("Preparing captions and editor controls");
       const url = URL.createObjectURL(file);
       setVideoUrl(url);
       setAnalysis(payload as AnalysisResult);
+      setAnalysisProgress(100);
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
       setMode("editor");
     } catch (caught) {
       if (activeJobId) {

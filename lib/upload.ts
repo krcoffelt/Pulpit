@@ -1,0 +1,3 @@
+export const UPLOAD_PART_BYTES = 3 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+export const MAX_UPLOAD_PARTS = Math.ceil(MAX_UPLOAD_BYTES / UPLOAD_PART_BYTES);
