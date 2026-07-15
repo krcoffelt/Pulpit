@@ -15,11 +15,34 @@ export function createRequestId() {
   return randomUUID();
 }
 
+function addConfiguredOrigin(origins: Set<string>, value: string | undefined) {
+  if (!value) return;
+  try {
+    origins.add(new URL(value).origin);
+  } catch {
+    // Invalid deployment metadata must never widen the trusted-origin set.
+  }
+}
+
 export function requireTrustedMutation(request: Request) {
   const requestUrl = new URL(request.url);
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
-  if (origin && origin !== requestUrl.origin) throw new ApiStatusError("This request came from an untrusted origin.", 403);
+  const trustedOrigins = new Set([requestUrl.origin]);
+  addConfiguredOrigin(trustedOrigins, process.env.NEXT_PUBLIC_APP_URL);
+  addConfiguredOrigin(trustedOrigins, process.env.URL);
+  addConfiguredOrigin(trustedOrigins, process.env.DEPLOY_PRIME_URL);
+  addConfiguredOrigin(trustedOrigins, process.env.DEPLOY_URL);
+
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = forwardedHost || request.headers.get("host")?.split(",")[0]?.trim();
+  const forwardedProtocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const protocol = forwardedProtocol === "http" || forwardedProtocol === "https"
+    ? forwardedProtocol
+    : requestUrl.protocol.replace(":", "");
+  if (host && /^[a-zA-Z0-9.-]+(?::\d{1,5})?$/.test(host)) trustedOrigins.add(`${protocol}://${host}`);
+
+  if (origin && !trustedOrigins.has(origin)) throw new ApiStatusError("This request came from an untrusted origin.", 403);
   if (fetchSite === "cross-site") throw new ApiStatusError("Cross-site changes are not allowed.", 403);
 }
 
