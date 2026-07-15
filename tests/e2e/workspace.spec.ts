@@ -12,9 +12,9 @@ test("any email opens the workspace immediately and remains signed in", async ({
   await expect(page.getByRole("heading", { name: "Enter your email. That's it." })).toBeVisible();
   await page.getByLabel("Email").fill("Anybody@Example.com");
   await page.getByRole("button", { name: "Enter Circumvision" }).click();
-  await expect(page.getByText("Trim the sermon.").or(page.getByRole("heading", { name: "Sermon workspace" }))).toBeVisible();
+  await expect(page.getByText("Trim the sermon.").or(page.getByRole("heading", { name: "Projects" }))).toBeVisible();
   await page.reload();
-  await expect(page.getByText("Trim the sermon.").or(page.getByRole("heading", { name: "Sermon workspace" }))).toBeVisible();
+  await expect(page.getByText("Trim the sermon.").or(page.getByRole("heading", { name: "Projects" }))).toBeVisible();
   await expect(page.getByRole("button", { name: "Enter Circumvision" })).toHaveCount(0);
 });
 
@@ -101,25 +101,52 @@ test("dashboard and upload workspace have no broken controls or horizontal overf
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Sermon workspace" }).or(page.getByText("Trim the sermon."))).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects" }).or(page.getByText("Trim the sermon."))).toBeVisible();
   const newButton = page.getByRole("button", { name: "New sermon" });
   if (await newButton.count()) {
     await expect(newButton).toBeVisible();
     await newButton.click();
   }
-  await expect(page.getByRole("button", { name: /Drop a sermon here/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Choose or drop a sermon/ })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow, `${isMobile ? "mobile" : "desktop"} horizontal overflow`).toBeLessThanOrEqual(0);
   expect(errors).toEqual([]);
 });
 
+test("desktop primary actions are clear and comfortably clickable", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop-only usability check");
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Projects" }).or(page.getByText("Trim the sermon."))).toBeVisible();
+  const newButton = page.getByRole("button", { name: "New sermon" });
+  if (await newButton.count()) await newButton.click();
+
+  const upload = page.getByRole("button", { name: "Choose or drop a sermon" });
+  const sample = page.getByRole("button", { name: "Try the sample" });
+  await expect(upload).toBeVisible();
+  await expect(sample).toBeVisible();
+  await expect(upload).toHaveJSProperty("disabled", false);
+  expect((await sample.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+
+  await sample.click();
+  await expect(page.getByRole("button", { name: "Export" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Projects" })).toBeVisible();
+
+  const criticalControls = page.locator(".editor-header button, .inspector-tabs button, .aspect-switcher button, .canvas-fit, .add-clip, .player-right button");
+  const sizes = await criticalControls.evaluateAll((buttons) => buttons.filter((button) => {
+    const style = getComputedStyle(button);
+    return style.display !== "none" && style.visibility !== "hidden";
+  }).map((button) => ({ label: button.textContent?.trim() || button.getAttribute("aria-label") || "button", height: button.getBoundingClientRect().height })));
+  expect(sizes.length).toBeGreaterThan(8);
+  for (const control of sizes) expect(control.height, `${control.label} click target`).toBeGreaterThanOrEqual(40);
+});
+
 test("editing tools remain available at mobile width", async ({ page, isMobile }) => {
   test.skip(!isMobile, "mobile-only interaction");
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Sermon workspace" }).or(page.getByText("Trim the sermon."))).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects" }).or(page.getByText("Trim the sermon."))).toBeVisible();
   const newButton = page.getByRole("button", { name: "New sermon" });
   if (await newButton.count()) await newButton.click();
-  await page.getByRole("button", { name: /Explore with a sample sermon/ }).click();
+  await page.getByRole("button", { name: /Try the sample/ }).click();
   await page.getByRole("button", { name: "Edit" }).click();
   await expect(page.getByRole("button", { name: "Close editing tools" }).last()).toBeVisible();
   await expect(page.getByRole("button", { name: /9:16/ }).last()).toBeVisible();

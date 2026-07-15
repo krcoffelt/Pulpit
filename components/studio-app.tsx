@@ -6,14 +6,12 @@ import {
   ArrowLeft,
   Captions,
   Check,
+  ChevronRight,
   Clock3,
   Download,
   Film,
-  FolderOpen,
   Frame,
-  Home,
   Info,
-  LayoutTemplate,
   LoaderCircle,
   LogOut,
   Maximize2,
@@ -28,7 +26,6 @@ import {
   Upload,
   WandSparkles,
   X,
-  Zap,
 } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 import { DEMO_ANALYSIS } from "@/lib/demo";
@@ -41,7 +38,6 @@ import type {
   ClipSuggestion,
   ClipTargetDuration,
   CircumvisionProject,
-  FrameMode,
   RenderSettings,
   ProjectSummary,
   ProjectExport,
@@ -272,7 +268,7 @@ function WelcomeView({
             <span className="headline-line">Trim the sermon.</span>
             <span className="headline-line">Not the <em>spirit.</em></span>
           </h1>
-          <p className="welcome-subtitle">Circumvision finds the moment, frames it right, and keeps the message intact.</p>
+          <p className="welcome-subtitle">Upload a sermon. Circumvision finds the strongest moments and makes them ready to post.</p>
         </div>
 
         <div
@@ -295,11 +291,11 @@ function WelcomeView({
           />
 
           {!file ? (
-            <button className="drop-prompt" onClick={() => inputRef.current?.click()}>
+            <button className="drop-prompt" onClick={() => inputRef.current?.click()} aria-label="Choose or drop a sermon">
               <span className="upload-orbit"><Upload size={25} strokeWidth={1.7} /></span>
-              <span className="drop-title">Drop a sermon here</span>
-              <span className="drop-note">or click to choose a video</span>
-              <span className="file-types">MP4 · MOV · WEBM · MP3 · M4A · WAV <i /> UP TO 2 GB</span>
+              <span className="drop-title">Choose a sermon</span>
+              <span className="drop-note">or drop a video or audio file</span>
+              <span className="file-types">MP4, MOV, WEBM, MP3, M4A, WAV <i /> 2 GB MAX</span>
             </button>
           ) : (
             <div className="selected-file">
@@ -327,15 +323,8 @@ function WelcomeView({
           )}
         </div>
 
-        <button className="sample-link" onClick={onSample}><Play size={12} fill="currentColor" /> Explore with a sample sermon</button>
+        <button className="sample-link" onClick={onSample}><Play size={13} fill="currentColor" /> Try the sample</button>
       </section>
-
-      <footer className="welcome-steps">
-        <div><span>01</span><strong>Transcribe</strong><p>Speaker-aware transcript with precise timing.</p></div>
-        <div><span>02</span><strong>Find moments</strong><p>AI ranks hooks that can stand on their own.</p></div>
-        <div><span>03</span><strong>Finish & export</strong><p>Crop, caption, and render for every platform.</p></div>
-        <small>BUILT FOR THE MESSAGE <Zap size={12} fill="currentColor" /></small>
-      </footer>
     </main>
   );
 }
@@ -416,7 +405,7 @@ function SignInView() {
       <section className="auth-panel">
         <p className="eyebrow"><span>OPEN WORKSPACE</span><i /> ANY EMAIL</p>
         <h1>Enter your email.<br /><em>That&apos;s it.</em></h1>
-        <p>No password, invitation, or email link. We&apos;ll remember this device and take you straight to the shared Circumvision workspace.</p>
+        <p>No password or email link. We&apos;ll remember this device.</p>
         <form onSubmit={enterWorkspace}>
           <label><span>Email</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
           {error && <div className="form-error"><Info size={15} /> {error}</div>}
@@ -457,22 +446,21 @@ function ProjectsView({
       </header>
       <section className="projects-main">
         <div className="projects-heading">
-          <div><p className="eyebrow"><span>TYSHONE ROLAND</span><i /> PROJECTS</p><h1>Sermon workspace</h1><p>Return to an edit, monitor processing, or start with a new message.</p></div>
+          <div><h1>Projects</h1><p>Open a sermon or start a new one.</p></div>
           <button className="primary-button" onClick={onNew}><Plus size={17} /> New sermon</button>
         </div>
         <div className="project-table" aria-busy={loading}>
-          <div className="project-table-head"><span>PROJECT</span><span>STATUS</span><span>UPDATED</span><span>OUTPUT</span><span /></div>
           {loading ? (
             <div className="project-empty"><LoaderCircle className="spin" size={22} /><strong>Loading projects</strong></div>
           ) : projects.length ? projects.map((project) => (
             <article className="project-row" key={project.id}>
               <button className="project-open" onClick={() => onOpen(project)} aria-label={`Open ${project.title}`}>
-                <span className="project-symbol"><Film size={17} /></span>
-                <span><strong>{project.title}</strong><small>{project.source.fileName} · {formatFileSize(project.source.fileSize)}{project.duration ? ` · ${formatTime(project.duration, true)}` : ""}</small></span>
+                <span className="project-main"><span className="project-symbol"><Film size={18} /></span><span><strong>{project.title}</strong><small>{project.source.fileName} · {project.duration ? formatTime(project.duration, true) : formatFileSize(project.source.fileSize)}</small></span></span>
+                <span className={`project-status status-${project.status}`}><i /><span><strong>{project.status}</strong><small>{project.stage}</small></span></span>
+                <time dateTime={project.updatedAt}>{new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(project.updatedAt))}</time>
+                <span className="project-output">{project.exports.filter((item) => item.status === "ready").length} exports<small>{project.clipCount} clips</small></span>
+                <ChevronRight className="project-chevron" size={18} />
               </button>
-              <div className={`project-status status-${project.status}`}><i /><span><strong>{project.status}</strong><small>{project.stage}</small></span></div>
-              <time dateTime={project.updatedAt}>{new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(project.updatedAt))}</time>
-              <span className="project-output">{project.exports.filter((item) => item.status === "ready").length} exports<small>{project.clipCount} clips</small></span>
               <button className="project-delete" onClick={() => onDelete(project)} aria-label={`Delete ${project.title}`}><Trash2 size={15} /></button>
               {project.progress < 100 && <span className="project-progress"><i style={{ width: `${project.progress}%` }} /></span>}
             </article>
@@ -496,19 +484,19 @@ function ClipList({ clips, selectedId, regenerating, onSelect, onRegenerate, onC
   return (
     <aside className="clip-panel">
       <div className="clip-panel-head">
-        <div><span>AI SELECTS</span><strong>{clips.length} moments found</strong></div>
+        <div><span>CLIPS</span><strong>{clips.length} suggested moments</strong></div>
         <button className="small-icon" disabled={regenerating} onClick={onRegenerate} aria-label="Regenerate clip suggestions" title="Regenerate suggestions">{regenerating ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button>
       </div>
       <div className="clip-list">
         {clips.map((clip, index) => (
-          <button key={clip.id} className={`clip-item ${clip.id === selectedId ? "selected" : ""}`} onClick={() => onSelect(clip)}>
+          <button key={clip.id} className={`clip-item ${clip.id === selectedId ? "selected" : ""}`} aria-pressed={clip.id === selectedId} onClick={() => onSelect(clip)}>
             <span className="clip-index">{String(index + 1).padStart(2, "0")}</span>
             <div className="clip-copy">
               <span className="clip-score"><Sparkles size={10} /> {clip.score}% MATCH</span>
               <strong>{clip.title}</strong>
               <p>“{clip.hook}”</p>
               <small className="clip-reason">{clip.reason}</small>
-              <small><Clock3 size={11} /> {formatTime(clip.end - clip.start, true)} <i /> {clip.platform}</small>
+              <small><Clock3 size={11} /> {formatTime(clip.end - clip.start, true)}</small>
             </div>
           </button>
         ))}
@@ -555,19 +543,23 @@ function Inspector({
     <aside className={`inspector ${mobileOpen ? "mobile-open" : ""}`}>
       <button className="inspector-close" aria-label="Close editing tools" onClick={onMobileClose}><X size={18} /></button>
       <div className="inspector-tabs">
-        <button className={tab === "captions" ? "active" : ""} onClick={() => onTab("captions")}><Captions size={15} /> Captions</button>
-        <button className={tab === "frame" ? "active" : ""} onClick={() => onTab("frame")}><Frame size={15} /> Frame</button>
-        <button className={tab === "transcript" ? "active" : ""} onClick={() => onTab("transcript")}><Subtitles size={15} /> Script</button>
+        <button className={tab === "captions" ? "active" : ""} aria-pressed={tab === "captions"} onClick={() => onTab("captions")}><Captions size={15} /> Captions</button>
+        <button className={tab === "frame" ? "active" : ""} aria-pressed={tab === "frame"} onClick={() => onTab("frame")}><Frame size={15} /> Crop</button>
+        <button className={tab === "transcript" ? "active" : ""} aria-pressed={tab === "transcript"} onClick={() => onTab("transcript")}><Subtitles size={15} /> Script</button>
       </div>
 
       <div className="inspector-body">
         {tab === "captions" && (
           <>
+            <section className="control-section switches">
+              <label><span><strong>Captions</strong><small>Show on preview and export</small></span><input type="checkbox" checked={settings.captionsEnabled} onChange={(event) => onSettings({ captionsEnabled: event.target.checked })} /><i /></label>
+              <label><span><strong>Orange highlight</strong><small>Emphasize key words</small></span><input type="checkbox" checked={settings.highlight} onChange={(event) => onSettings({ highlight: event.target.checked })} /><i /></label>
+            </section>
             <section className="control-section">
               <div className="control-heading"><span>CAPTION STYLE</span><button onClick={onResetSettings}><RotateCcw size={12} /> Reset</button></div>
               <div className="caption-presets">
                 {(["bold", "clean", "minimal"] as CaptionPreset[]).map((preset) => (
-                  <button key={preset} className={settings.captionPreset === preset ? "selected" : ""} onClick={() => onSettings({ captionPreset: preset })}>
+                  <button key={preset} className={settings.captionPreset === preset ? "selected" : ""} aria-pressed={settings.captionPreset === preset} onClick={() => onSettings({ captionPreset: preset })}>
                     <span className={`preset-preview ${preset}`}>{preset === "bold" ? "SAY IT" : preset === "clean" ? "Say it" : "say it"}</span>
                     <small>{preset}</small>
                   </button>
@@ -577,7 +569,7 @@ function Inspector({
 
             <section className="control-section">
               <div className="control-heading"><span>SIZE</span><b>{Math.round(settings.captionScale * 100)}%</b></div>
-              <input className="range" type="range" min="0.7" max="1.35" step="0.05" value={settings.captionScale} onChange={(event) => onSettings({ captionScale: Number(event.target.value) })} />
+              <input className="range" aria-label="Caption size" type="range" min="0.7" max="1.35" step="0.05" value={settings.captionScale} onChange={(event) => onSettings({ captionScale: Number(event.target.value) })} />
               <div className="range-labels"><span>A</span><strong>A</strong></div>
             </section>
 
@@ -585,51 +577,24 @@ function Inspector({
               <span className="section-label">POSITION</span>
               <div className="segmented">
                 {(["middle", "bottom"] as CaptionPosition[]).map((position) => (
-                  <button key={position} className={settings.captionPosition === position ? "active" : ""} onClick={() => onSettings({ captionPosition: position })}>
+                  <button key={position} className={settings.captionPosition === position ? "active" : ""} aria-pressed={settings.captionPosition === position} onClick={() => onSettings({ captionPosition: position })}>
                     <AlignCenter size={13} /> {position}
                   </button>
                 ))}
               </div>
             </section>
 
-            <section className="control-section switches">
-              <label><span><strong>Captions</strong><small>Burn text into the export</small></span><input type="checkbox" checked={settings.captionsEnabled} onChange={(event) => onSettings({ captionsEnabled: event.target.checked })} /><i /></label>
-              <label><span><strong>Signal highlight</strong><small>Use the brand color on key text</small></span><input type="checkbox" checked={settings.highlight} onChange={(event) => onSettings({ highlight: event.target.checked })} /><i /></label>
-            </section>
           </>
         )}
 
         {tab === "frame" && (
           <>
-            <section className="control-section">
-              <span className="section-label">ASPECT RATIO</span>
-              <div className="aspect-options">
-                {(["9:16", "4:5", "1:1"] as AspectRatio[]).map((aspect) => (
-                  <button key={aspect} className={settings.aspect === aspect ? "selected" : ""} onClick={() => onSettings({ aspect })}>
-                    <i className={`ratio-shape ratio-${aspect.replace(":", "-")}`} />
-                    <strong>{aspect}</strong>
-                    <small>{aspect === "9:16" ? "Reels / Shorts" : aspect === "4:5" ? "Instagram feed" : "Square feed"}</small>
-                  </button>
-                ))}
-              </div>
-            </section>
-            <section className="control-section">
-              <span className="section-label">SOURCE FIT</span>
-              <div className="frame-modes">
-                {(["fill", "fit"] as FrameMode[]).map((mode) => (
-                  <button key={mode} className={settings.frameMode === mode ? "selected" : ""} onClick={() => onSettings({ frameMode: mode })}>
-                    {mode === "fill" ? <Maximize2 size={18} /> : <LayoutTemplate size={18} />}
-                    <span><strong>{mode === "fill" ? "Fill frame" : "Full frame"}</strong><small>{mode === "fill" ? "Crop to the selected ratio" : "Keep the full frame with a soft backdrop"}</small></span>
-                  </button>
-                ))}
-              </div>
-            </section>
             <section className="control-section frame-position">
-              <div className="control-heading"><span>MANUAL REFRAME</span><button onClick={() => onSettings({ frameX: 0, frameY: 0 })}><RotateCcw size={12} /> Center</button></div>
-              <label><span>Horizontal <b>{settings.frameX > 0 ? "+" : ""}{settings.frameX}</b></span><input className="range" type="range" min="-100" max="100" step="5" value={settings.frameX} onChange={(event) => onSettings({ frameX: Number(event.target.value) })} /></label>
-              <label><span>Vertical <b>{settings.frameY > 0 ? "+" : ""}{settings.frameY}</b></span><input className="range" type="range" min="-100" max="100" step="5" value={settings.frameY} onChange={(event) => onSettings({ frameY: Number(event.target.value) })} /></label>
+              <div className="control-heading"><span>POSITION</span><button onClick={() => onSettings({ frameX: 0, frameY: 0 })}><RotateCcw size={12} /> Center</button></div>
+              <label><span>Horizontal <b>{settings.frameX > 0 ? "+" : ""}{settings.frameX}</b></span><input className="range" aria-label="Horizontal crop position" type="range" min="-100" max="100" step="5" value={settings.frameX} onChange={(event) => onSettings({ frameX: Number(event.target.value) })} /></label>
+              <label><span>Vertical <b>{settings.frameY > 0 ? "+" : ""}{settings.frameY}</b></span><input className="range" aria-label="Vertical crop position" type="range" min="-100" max="100" step="5" value={settings.frameY} onChange={(event) => onSettings({ frameY: Number(event.target.value) })} /></label>
             </section>
-            <p className="inspector-tip"><Sparkles size={14} /> Use Full frame to preserve the whole shot or move the crop manually to keep the speaker centered.</p>
+            <p className="inspector-tip"><Sparkles size={14} /> Move the crop until the speaker is centered.</p>
           </>
         )}
 
@@ -1031,29 +996,19 @@ function EditorView({
 
   return (
     <main className="editor-shell">
-      <nav className="rail">
-        <BrandMark compact />
-        <div className="rail-main">
-          <button className="active" aria-label="Editor" onClick={onBack}><Home size={18} /></button>
-          <button aria-label="Projects" onClick={onBack}><FolderOpen size={18} /></button>
-        </div>
-        <div className="rail-foot">
-          <span className="avatar">TR</span>
-        </div>
-      </nav>
-
       <div className="editor-main">
         <header className="editor-header">
-          <div className="project-breadcrumb">
-            <button onClick={onBack} aria-label="Back to upload"><ArrowLeft size={16} /></button>
-            <div><span>PROJECT / SERMON</span><strong>{analysis.title}</strong></div>
+          <div className="editor-identity">
+            <BrandMark compact />
+            <button className="back-to-projects" onClick={onBack}><ArrowLeft size={16} /> Projects</button>
+            <div className="editor-title"><strong>{analysis.title}</strong><span>{clips.length} clips</span></div>
           </div>
           <div className="editor-actions">
             <span className="saved-state"><Check size={12} /> {saveState}</span>
-            <button className="secondary-button" onClick={onNew}><Plus size={15} /> New project</button>
+            <button className="secondary-button" onClick={onNew}><Plus size={15} /> New sermon</button>
             <button className="export-button" disabled={exporting} onClick={exportClip}>
               {exporting ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}
-              {exporting ? exportProgress ? `${exportProgress}% · Downloading` : "Rendering…" : "Export clip"}
+              {exporting ? exportProgress ? `${exportProgress}% · Downloading` : "Rendering…" : "Export"}
             </button>
           </div>
         </header>
@@ -1065,12 +1020,12 @@ function EditorView({
             <div className="canvas-toolbar">
               <div className="aspect-switcher">
                 {(["9:16", "4:5", "1:1"] as AspectRatio[]).map((aspect) => (
-                  <button key={aspect} className={settings.aspect === aspect ? "active" : ""} onClick={() => setSettings((value) => ({ ...value, aspect }))}>
+                  <button key={aspect} className={settings.aspect === aspect ? "active" : ""} aria-pressed={settings.aspect === aspect} onClick={() => setSettings((value) => ({ ...value, aspect }))}>
                     <i className={`ratio-shape ratio-${aspect.replace(":", "-")}`} /> {aspect}
                   </button>
                 ))}
               </div>
-              <button className="canvas-fit" onClick={() => setSettings((value) => ({ ...value, frameMode: value.frameMode === "fill" ? "fit" : "fill" }))}><Maximize2 size={13} /> {settings.frameMode === "fill" ? "Fill" : "Full frame"}</button>
+              <button className="canvas-fit" onClick={() => setSettings((value) => ({ ...value, frameMode: value.frameMode === "fill" ? "fit" : "fill" }))}><Maximize2 size={13} /> {settings.frameMode === "fill" ? "Crop to fill" : "Fit full frame"}</button>
               <button className="mobile-tools" onClick={() => setMobileToolsOpen(true)}><Frame size={13} /> Edit</button>
             </div>
 
@@ -1117,7 +1072,7 @@ function EditorView({
             <div className="player-controls">
               <div className="player-time"><strong>{formatTime(currentTime - selectedClip.start)}</strong><span>/ {formatTime(selectedClip.end - selectedClip.start)}</span></div>
               <button className="play-button" aria-label={playing ? "Pause clip" : "Play clip"} onClick={togglePlay}>{playing ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}</button>
-              <div className="player-right"><button aria-label="Toggle captions" aria-pressed={settings.captionsEnabled} onClick={() => setSettings((value) => ({ ...value, captionsEnabled: !value.captionsEnabled }))}><Captions size={15} /></button><button aria-label="Enter fullscreen preview" onClick={() => void stageRef.current?.requestFullscreen().catch(() => setToast("Fullscreen preview is not available in this browser."))}><Maximize2 size={15} /></button></div>
+              <div className="player-right"><button aria-label="Enter fullscreen preview" onClick={() => void stageRef.current?.requestFullscreen().catch(() => setToast("Fullscreen preview is not available in this browser."))}><Maximize2 size={16} /></button></div>
             </div>
           </section>
 
