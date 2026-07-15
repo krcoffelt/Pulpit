@@ -84,7 +84,8 @@ describe("durable render pipeline", () => {
     const project = await createStoredProject("fixture.mp4", "video/mp4", videoBytes);
     try {
       await assertRendered(project.id, aspect);
-      expect((await requireProject(ownerId, project.id)).exports[0].status).toBe("ready");
+      expect((await requireProject(ownerId, project.id)).exports[0]).toMatchObject({ status: "ready", captionsEnabled: true, captionsApplied: true });
+      expect((await requireProject(ownerId, project.id)).exports[0].captionCueCount).toBeGreaterThan(0);
     } finally {
       await deleteProject(ownerId, project.id);
     }

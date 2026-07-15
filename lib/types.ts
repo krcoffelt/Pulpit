@@ -77,6 +77,9 @@ export interface ProjectExport {
   createdAt: string;
   completedAt?: string;
   fileSize?: number;
+  captionsEnabled?: boolean;
+  captionsApplied?: boolean;
+  captionCueCount?: number;
   error?: string;
 }
 

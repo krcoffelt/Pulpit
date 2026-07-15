@@ -668,7 +668,7 @@ function Inspector({
               {exports.slice(0, 5).map((item) => (
                 <div className="export-row" key={item.id}>
                   <button disabled={item.status !== "ready"} onClick={() => onDownloadExport(item)}>
-                    <span><strong>{item.aspect}</strong><small>{item.status === "ready" && item.fileSize ? formatFileSize(item.fileSize) : item.status}</small></span>
+                    <span><strong>{item.aspect}</strong><small>{item.status === "ready" && item.fileSize ? `${formatFileSize(item.fileSize)}${item.captionsApplied && item.captionCueCount ? ` · ${item.captionCueCount} caption cues` : item.captionsEnabled === false ? " · captions off" : ""}` : item.status}</small></span>
                     {item.status === "ready" ? <Download size={14} /> : item.status === "failed" || item.status === "cancelled" ? <Info size={14} /> : <LoaderCircle className="spin" size={14} />}
                   </button>
                   {(item.status === "queued" || item.status === "rendering") && <button className="cancel-export" aria-label={`Cancel ${item.aspect} export`} onClick={() => onCancelExport(item)}><X size={13} /></button>}

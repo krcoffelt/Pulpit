@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -11,6 +11,8 @@ import OpenAI from "openai";
 import type { AspectRatio, CaptionPreset, CaptionPosition, FrameMode, TranscriptSegment } from "./types";
 
 const execFileAsync = promisify(execFile);
+const captionFontPath = path.join(process.cwd(), "node_modules", "next", "dist", "compiled", "@vercel", "og", "Geist-Regular.ttf");
+const captionFontDirectory = path.dirname(captionFontPath);
 
 function requireBinary(binary: string | null | undefined, name: string) {
   if (!binary) throw new Error(`${name} binary is unavailable on this platform.`);
@@ -223,7 +225,7 @@ export async function renderClip(options: RenderClipOptions) {
   const borderStyle = options.captionPreset === "clean" ? 3 : 1;
   const primary = "&H00FFFFFF";
 
-  const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nWrapStyle: 2\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Caption,Arial,${fontSize},${primary},&H00FFFFFF,&H00000000,${backColor},-1,0,0,0,100,100,0,0,${borderStyle},${outline},1,2,70,70,${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+  const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nWrapStyle: 2\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Caption,Geist,${fontSize},${primary},&H00FFFFFF,&H00000000,${backColor},-1,0,0,0,100,100,0,0,${borderStyle},${outline},1,2,70,70,${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
 
   const events = options.transcript
     .filter((segment) => segment.end > options.start && segment.start < options.end)
@@ -247,10 +249,15 @@ export async function renderClip(options: RenderClipOptions) {
   if (options.captionsEnabled && !events.length && fallbackCaption) {
     events.push(`Dialogue: 0,${assTimestamp(0)},${assTimestamp(Math.max(0.5, options.end - options.start))},Caption,,0,0,0,,${captionLines(fallbackCaption, options.captionPreset, options.highlight)}`);
   }
+  if (options.captionsEnabled && !events.length) throw new Error("No caption text is available for this clip.");
+  if (options.captionsEnabled) await access(captionFontPath).catch(() => {
+    throw new Error("The bundled caption font is unavailable in the render environment.");
+  });
   await writeFile(options.subtitlePath, header + events.join("\n"), "utf8");
 
   const escapedSubtitles = options.subtitlePath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
-  const captionFilter = options.captionsEnabled ? `,ass='${escapedSubtitles}'` : "";
+  const escapedFontDirectory = captionFontDirectory.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
+  const captionFilter = options.captionsEnabled ? `,ass='${escapedSubtitles}':fontsdir='${escapedFontDirectory}'` : "";
   const frameX = Math.max(0, Math.min(1, 0.5 + options.frameX / 200)).toFixed(3);
   const frameY = Math.max(0, Math.min(1, 0.5 + options.frameY / 200)).toFixed(3);
   let filter: string;
@@ -263,8 +270,8 @@ export async function renderClip(options: RenderClipOptions) {
     filter = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='(iw-ow)*${frameX}':y='(ih-oh)*${frameY}'${captionFilter}[v]`;
   }
 
-  await run(binary, [
-    "-hide_banner", "-loglevel", "error", "-y",
+  const { stderr } = await run(binary, [
+    "-hide_banner", "-nostats", "-loglevel", options.captionsEnabled ? "info" : "error", "-y",
     "-ss", String(options.start), "-i", options.sourcePath,
     "-t", String(Math.max(0.5, options.end - options.start)),
     "-filter_complex", filter,
@@ -273,8 +280,15 @@ export async function renderClip(options: RenderClipOptions) {
     "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
     "-r", "30", "-movflags", "+faststart", options.outputPath,
   ]);
+  if (options.captionsEnabled && !/fontselect:[^\n]*(?:Geist|Geist-Regular)/i.test(stderr)) {
+    throw new Error("FFmpeg did not load the bundled Geist font for the caption track.");
+  }
 
-  return readFile(options.outputPath);
+  return {
+    bytes: await readFile(options.outputPath),
+    captionCueCount: options.captionsEnabled ? events.length : 0,
+    captionsApplied: options.captionsEnabled && events.length > 0,
+  };
 }
 
 export async function withTempUpload<T>(file: File, prefix: string, callback: (context: { dir: string; sourcePath: string }) => Promise<T>) {

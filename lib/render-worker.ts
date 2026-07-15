@@ -6,6 +6,7 @@ import { hasVideoStream, renderClip } from "./media";
 import { projectSourcePartKey, requireProject } from "./projects";
 import { exportMediaKey, readRenderJob, requireRenderJob, saveRenderJob, updateProjectExport } from "./render-jobs";
 import { safeErrorMessage } from "./public-error";
+import { logEvent } from "./log";
 
 async function assembleSource(projectId: string, totalParts: number, fileSize: number, outputPath: string) {
   const output = await open(outputPath, "w");
@@ -41,7 +42,7 @@ export async function runRenderJob(input: { projectId: string; exportId: string;
   try {
     await assembleSource(project.id, project.source.totalParts, project.source.fileSize, sourcePath);
     if ((await readRenderJob(job.projectId, job.id))?.status === "cancelled") return;
-    const output = await renderClip({
+    const rendered = await renderClip({
       sourcePath,
       outputPath,
       subtitlePath: path.join(directory, "captions.ass"),
@@ -52,12 +53,27 @@ export async function runRenderJob(input: { projectId: string; exportId: string;
       ...job.settings,
       audioOnly: !(await hasVideoStream(sourcePath)),
     });
+    logEvent("info", "render.captions_verified", {
+      projectId: job.projectId,
+      exportId: job.id,
+      captionsEnabled: job.settings.captionsEnabled,
+      captionsApplied: rendered.captionsApplied,
+      captionCueCount: rendered.captionCueCount,
+    });
     if ((await readRenderJob(job.projectId, job.id))?.status === "cancelled") return;
-    await putJobBytes(exportMediaKey(project.id, job.id), output);
+    await putJobBytes(exportMediaKey(project.id, job.id), rendered.bytes);
     job.status = "ready";
     await Promise.all([
       saveRenderJob(job),
-      updateProjectExport(job.ownerId, job.projectId, job.id, { status: "ready", completedAt: new Date().toISOString(), fileSize: output.byteLength, error: undefined }),
+      updateProjectExport(job.ownerId, job.projectId, job.id, {
+        status: "ready",
+        completedAt: new Date().toISOString(),
+        fileSize: rendered.bytes.byteLength,
+        captionsEnabled: job.settings.captionsEnabled,
+        captionsApplied: rendered.captionsApplied,
+        captionCueCount: rendered.captionCueCount,
+        error: undefined,
+      }),
     ]);
   } catch (error) {
     const message = safeErrorMessage(error, "The clip could not be rendered. Retry the export; the source sermon is still stored safely.");

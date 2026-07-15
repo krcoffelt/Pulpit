@@ -59,7 +59,15 @@ export async function createRenderJob(input: {
   const token = randomBytes(32).toString("hex");
   const fileName = safeExportName(input.clip.title, input.settings.aspect);
   const job: StoredRenderJob = { ...input, id, token, createdAt, status: "queued" };
-  const projectExport: ProjectExport = { id, clipId: input.clip.id, aspect: input.settings.aspect, status: "queued", fileName, createdAt };
+  const projectExport: ProjectExport = {
+    id,
+    clipId: input.clip.id,
+    aspect: input.settings.aspect,
+    status: "queued",
+    fileName,
+    createdAt,
+    captionsEnabled: input.settings.captionsEnabled,
+  };
   project.exports.unshift(projectExport);
   project.status = "rendering";
   project.stage = `Queued ${input.settings.aspect} export`;

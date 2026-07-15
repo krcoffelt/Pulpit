@@ -6,7 +6,7 @@
 
 [functions."render-background"]
   background = true
-  included_files = ["node_modules/ffmpeg-static/ffmpeg", "node_modules/ffprobe-static/bin/linux/x64/ffprobe"]
+  included_files = ["node_modules/ffmpeg-static/ffmpeg", "node_modules/ffprobe-static/bin/linux/x64/ffprobe", "node_modules/next/dist/compiled/@vercel/og/Geist-Regular.ttf"]
 
 [functions."process-background"]
   background = true
