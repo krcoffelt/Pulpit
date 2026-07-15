@@ -75,7 +75,16 @@ export async function POST(request: Request, context: RouteContext) {
       });
     }
 
-    console.info("[api/exports] queued", { requestId, projectId, exportId: job.id, aspect: input.settings.aspect });
+    const overlappingSegments = input.transcript.filter((segment) => segment.end > input.clip.start && segment.start < input.clip.end).length;
+    console.info("[api/exports] queued", {
+      requestId,
+      projectId,
+      exportId: job.id,
+      aspect: input.settings.aspect,
+      captionsEnabled: input.settings.captionsEnabled,
+      transcriptSegments: input.transcript.length,
+      overlappingSegments,
+    });
     return NextResponse.json({ export: projectExport, requestId }, { status: 202 });
   } catch (error) {
     return apiError(error, requestId, "The export could not be queued.", error instanceof z.ZodError);
