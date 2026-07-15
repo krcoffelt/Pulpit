@@ -14,6 +14,8 @@ The application denies project, media, processing, and export access unless the 
 
 Circumvision also rejects accounts that were not created by an Identity invitation (or explicitly assigned the `circumvision`/`admin` role), even if open signup is accidentally enabled in Netlify. For an additional one-user allowlist, set `CIRCUMVISION_ALLOWED_EMAILS` to Tyshone's email. Keep Netlify registration set to **Invite only** as the first line of defense.
 
+Invitation links open Circumvision's built-in password-creation screen. The sign-in screen also includes password recovery; recovery links open an authenticated new-password form before entering the workspace. Users should never share their password with an operator or support agent.
+
 ## Media architecture
 
 - The browser sends 3 MB resumable sections, below Netlify's binary request ceiling.

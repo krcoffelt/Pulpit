@@ -385,28 +385,46 @@ function AnalyzingView({ fileName, step, progress, activeDetail, onCancel }: { f
   );
 }
 
+type AuthFlow = "login" | "request-recovery" | "invite-password" | "recovery-password" | "processing";
+
 function SignInView() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [inviteToken, setInviteToken] = useState("");
+  const [flow, setFlow] = useState<AuthFlow>("login");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     if (!/^#(confirmation_token|recovery_token|invite_token|email_change_token|access_token)=/.test(window.location.hash)) return;
     void import("@netlify/identity").then(async ({ handleAuthCallback }) => {
+      setFlow("processing");
       try {
-        await handleAuthCallback();
+        const result = await handleAuthCallback();
+        if (result?.type === "invite" && result.token) {
+          setInviteToken(result.token);
+          setFlow("invite-password");
+          return;
+        }
+        if (result?.type === "recovery") {
+          setFlow("recovery-password");
+          return;
+        }
         window.location.replace("/");
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "The sign-in link could not be completed.");
+        setFlow("login");
       }
     });
   }, []);
 
-  const submit = async (event: React.FormEvent) => {
+  const signIn = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       const { login } = await import("@netlify/identity");
       await login(email.trim(), password);
@@ -417,19 +435,93 @@ function SignInView() {
     }
   };
 
+  const sendRecovery = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { requestPasswordRecovery } = await import("@netlify/identity");
+      await requestPasswordRecovery(email.trim());
+      setNotice("If that email belongs to an invited account, a password-reset link is on its way.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The password-reset email could not be sent.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finishPasswordSetup = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    if (password.length < 8) {
+      setError("Use at least 8 characters for your password.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("The passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const identity = await import("@netlify/identity");
+      if (flow === "invite-password") {
+        if (!inviteToken) throw new Error("This invitation link is incomplete. Open the invitation email again.");
+        await identity.acceptInvite(inviteToken, password);
+      } else {
+        await identity.updateUser({ password });
+      }
+      window.location.replace("/");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The password could not be saved.");
+      setBusy(false);
+    }
+  };
+
+  const showLogin = () => {
+    setFlow("login");
+    setPassword("");
+    setConfirmPassword("");
+    setError("");
+    setNotice("");
+  };
+
+  const settingPassword = flow === "invite-password" || flow === "recovery-password";
+  const heading = flow === "invite-password" ? <>Create your<br /><em>password.</em></>
+    : flow === "recovery-password" ? <>Choose a new<br /><em>password.</em></>
+      : flow === "request-recovery" ? <>Reset your<br /><em>password.</em></>
+        : <>Sign in to<br /><em>Circumvision.</em></>;
+  const description = flow === "invite-password"
+    ? "Finish accepting your invitation to enter Tyshone's private workspace."
+    : flow === "recovery-password"
+      ? "Set a new password to finish recovering your Circumvision account."
+      : flow === "request-recovery"
+        ? "Enter the email that received the Circumvision invitation."
+        : "Your sermons, transcripts, edits, and exports stay inside your private workspace.";
+
+  if (flow === "processing") {
+    return <main className="app-loading"><BrandMark /><LoaderCircle className="spin" size={24} /><span>Verifying your secure link</span></main>;
+  }
+
   return (
     <main className="auth-shell">
       <header className="welcome-nav"><BrandMark /></header>
       <section className="auth-panel">
         <p className="eyebrow"><span>PRIVATE WORKSPACE</span><i /> TYSHONE ROLAND</p>
-        <h1>Sign in to<br /><em>Circumvision.</em></h1>
-        <p>Your sermons, transcripts, edits, and exports stay inside your private workspace.</p>
-        <form onSubmit={submit}>
-          <label><span>Email</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-          <label><span>Password</span><input required type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        <h1>{heading}</h1>
+        <p>{description}</p>
+        <form onSubmit={settingPassword ? finishPasswordSetup : flow === "request-recovery" ? sendRecovery : signIn}>
+          {!settingPassword && <label><span>Email</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>}
+          {flow !== "request-recovery" && <label><span>{settingPassword ? "New password" : "Password"}</span><input required minLength={settingPassword ? 8 : undefined} type="password" autoComplete={settingPassword ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} /></label>}
+          {settingPassword && <label><span>Confirm password</span><input required minLength={8} type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>}
           {error && <div className="form-error"><Info size={15} /> {error}</div>}
-          <button className="primary-button" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Scissors size={17} />} {busy ? "Signing in…" : "Sign in"}</button>
+          {notice && <div className="form-success"><Check size={15} /> {notice}</div>}
+          <button className="primary-button" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Scissors size={17} />} {busy ? "Working…" : settingPassword ? "Save password" : flow === "request-recovery" ? "Send reset link" : "Sign in"}</button>
         </form>
+        {flow === "login"
+          ? <button className="auth-link" type="button" onClick={() => { setFlow("request-recovery"); setError(""); }}>Forgot your password?</button>
+          : flow === "request-recovery" && <button className="auth-link" type="button" onClick={showLogin}>Return to sign in</button>}
       </section>
     </main>
   );
