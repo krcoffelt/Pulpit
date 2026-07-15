@@ -1,0 +1,21 @@
+{
+  "name": "Pulpit Studio",
+  "short_name": "Pulpit",
+  "description": "Turn full sermons into captioned, platform-ready short-form video.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c0c0d",
+  "theme_color": "#0c0c0d",
+  "icons": [
+    {
+      "src": "/brand/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/app-icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
