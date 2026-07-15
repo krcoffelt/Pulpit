@@ -6,6 +6,7 @@ import { requireCircumvisionUser } from "@/lib/auth";
 import { findBestClips } from "@/lib/clip-selection";
 import { requireProject, saveProject } from "@/lib/projects";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { PublicError } from "@/lib/public-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,11 +29,11 @@ export async function POST(request: Request, context: RouteContext) {
     const input = requestSchema.parse(await request.json().catch(() => ({})));
     const project = await requireProject(user.id, projectId);
     const transcript = project.editor?.transcript || project.analysis?.transcript;
-    if (!transcript?.length) throw new Error("Finish the transcript before regenerating clip suggestions.");
+    if (!transcript?.length) throw new PublicError("Finish the transcript before regenerating clip suggestions.", 409);
     const targetDuration = input.targetDuration || project.targetDuration || 30;
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 2, timeout: 4 * 60 * 1000 });
     const clips = await findBestClips(transcript, openai, targetDuration);
-    if (!clips.length) throw new Error("No complete, non-overlapping moments were found.");
+    if (!clips.length) throw new PublicError("No complete, non-overlapping moments were found.", 422);
     project.targetDuration = targetDuration;
     if (project.analysis) project.analysis.clips = clips;
     if (project.editor) {

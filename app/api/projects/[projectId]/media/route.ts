@@ -3,6 +3,7 @@ import { requireCircumvisionUser } from "@/lib/auth";
 import { getJobBytes } from "@/lib/job-storage";
 import { projectSourcePartKey, requireProject } from "@/lib/projects";
 import { UPLOAD_PART_BYTES } from "@/lib/upload";
+import { PublicError } from "@/lib/public-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +40,7 @@ export async function GET(request: Request, context: RouteContext) {
     const chunks: Uint8Array[] = [];
     for (let partIndex = firstPart; partIndex <= lastPart; partIndex += 1) {
       const bytes = await getJobBytes(projectSourcePartKey(projectId, partIndex));
-      if (!bytes) throw new Error("The source media is incomplete. Resume the upload.");
+      if (!bytes) throw new PublicError("The source media is incomplete. Resume the upload.", 409);
       const sliceStart = partIndex === firstPart ? range.start % UPLOAD_PART_BYTES : 0;
       const sliceEnd = partIndex === lastPart ? (range.end % UPLOAD_PART_BYTES) + 1 : bytes.byteLength;
       chunks.push(bytes.slice(sliceStart, sliceEnd));

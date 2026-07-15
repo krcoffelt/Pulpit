@@ -5,6 +5,7 @@ import { getJobBytes, putJobBytes } from "./job-storage";
 import { hasVideoStream, renderClip } from "./media";
 import { projectSourcePartKey, requireProject } from "./projects";
 import { exportMediaKey, readRenderJob, requireRenderJob, saveRenderJob, updateProjectExport } from "./render-jobs";
+import { safeErrorMessage } from "./public-error";
 
 async function assembleSource(projectId: string, totalParts: number, fileSize: number, outputPath: string) {
   const output = await open(outputPath, "w");
@@ -58,7 +59,7 @@ export async function runRenderJob(input: { projectId: string; exportId: string;
       updateProjectExport(job.ownerId, job.projectId, job.id, { status: "ready", completedAt: new Date().toISOString(), fileSize: output.byteLength, error: undefined }),
     ]);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "The clip could not be rendered.";
+    const message = safeErrorMessage(error, "The clip could not be rendered. Retry the export; the source sermon is still stored safely.");
     job.status = "failed";
     await Promise.all([
       saveRenderJob(job),

@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { getJobJson, jobKey, putJobJson } from "./job-storage";
 import { requireProject, updateProject } from "./projects";
+import { PublicError } from "./public-error";
 
 export interface StoredProcessJob {
   projectId: string;
@@ -24,7 +25,7 @@ function verifyToken(actual: string, supplied: string) {
 
 export async function createProcessJob(ownerId: string, projectId: string) {
   const project = await requireProject(ownerId, projectId);
-  if (project.source.uploadedParts.length !== project.source.totalParts) throw new Error("The source upload is incomplete.");
+  if (project.source.uploadedParts.length !== project.source.totalParts) throw new PublicError("The source upload is incomplete.", 409);
   const existing = await getJobJson<StoredProcessJob>(processJobKey(projectId));
   const existingIsActive = existing && (existing.status === "queued" || existing.status === "running");
   const existingIsRecent = existing && Date.now() - Date.parse(existing.updatedAt) < 16 * 60 * 1000;

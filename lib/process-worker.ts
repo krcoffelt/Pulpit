@@ -3,6 +3,7 @@ import { cleanupAnalysisIntermediates, createAnalysisJobFromUpload, finishAnalys
 import { logEvent } from "./log";
 import { requireProcessJob, saveProcessJob } from "./process-jobs";
 import { DEFAULT_RENDER_SETTINGS, requireProject, updateProject } from "./projects";
+import { PublicError, safeErrorMessage } from "./public-error";
 
 class ProcessCancelledError extends Error {
   constructor() {
@@ -28,7 +29,7 @@ export async function runProcessJob(input: { projectId: string; token: string })
 
   try {
     await assertProcessActive(job.ownerId, job.projectId);
-    if (!process.env.OPENAI_API_KEY) throw new Error("OpenAI is not configured for this deployment.");
+    if (!process.env.OPENAI_API_KEY) throw new PublicError("OpenAI is not configured for this deployment.", 503);
     await updateProject(job.ownerId, job.projectId, { status: "preparing", stage: "Extracting and optimizing audio", progress: 12, error: undefined });
     const prepared = await createAnalysisJobFromUpload({
       jobId: project.id,
@@ -92,7 +93,7 @@ export async function runProcessJob(input: { projectId: string; token: string })
       logEvent("info", "process.cancelled", { projectId: job.projectId, ownerId: job.ownerId });
       return;
     }
-    const message = error instanceof Error ? error.message : "The sermon could not be processed.";
+    const message = safeErrorMessage(error, "Sermon processing failed. Retry this project; the retained source and completed transcript sections are safe.");
     job.status = "failed";
     job.updatedAt = new Date().toISOString();
     await Promise.all([

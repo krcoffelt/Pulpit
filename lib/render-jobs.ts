@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { getJobJson, jobKey, putJobJson } from "./job-storage";
 import { requireProject, saveProject } from "./projects";
 import type { ClipSuggestion, ProjectExport, RenderSettings, TranscriptSegment } from "./types";
+import { PublicError } from "./public-error";
 
 export const EXPORT_ID_PATTERN = /^export-[a-f0-9-]{36}$/;
 
@@ -18,12 +19,12 @@ export interface StoredRenderJob {
 }
 
 function renderJobKey(projectId: string, exportId: string) {
-  if (!EXPORT_ID_PATTERN.test(exportId)) throw new Error("The export identifier is invalid.");
+  if (!EXPORT_ID_PATTERN.test(exportId)) throw new PublicError("The export identifier is invalid.", 400);
   return jobKey(projectId, `renders/${exportId}.json`);
 }
 
 export function exportMediaKey(projectId: string, exportId: string) {
-  if (!EXPORT_ID_PATTERN.test(exportId)) throw new Error("The export identifier is invalid.");
+  if (!EXPORT_ID_PATTERN.test(exportId)) throw new PublicError("The export identifier is invalid.", 400);
   return jobKey(projectId, `exports/${exportId}.mp4`);
 }
 
@@ -52,7 +53,7 @@ export async function createRenderJob(input: {
   settings: RenderSettings;
 }) {
   const project = await requireProject(input.ownerId, input.projectId);
-  if (project.source.uploadedParts.length !== project.source.totalParts) throw new Error("The source upload is incomplete.");
+  if (project.source.uploadedParts.length !== project.source.totalParts) throw new PublicError("The source upload is incomplete.", 409);
   const id = `export-${randomUUID()}`;
   const createdAt = new Date().toISOString();
   const token = randomBytes(32).toString("hex");
@@ -89,7 +90,7 @@ export async function requireRenderJob(projectId: string, exportId: string, toke
 export async function cancelRenderJob(ownerId: string, projectId: string, exportId: string) {
   const project = await requireProject(ownerId, projectId);
   const job = await readRenderJob(projectId, exportId);
-  if (!job || job.ownerId !== ownerId) throw new Error("This export could not be found.");
+  if (!job || job.ownerId !== ownerId) throw new PublicError("This export could not be found.", 404);
   if (job.status === "ready" || job.status === "failed" || job.status === "cancelled") return project.exports.find((item) => item.id === exportId);
   job.status = "cancelled";
   await Promise.all([

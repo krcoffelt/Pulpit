@@ -15,6 +15,7 @@ import type {
   RenderSettings,
 } from "./types";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_PARTS, UPLOAD_PART_BYTES } from "./upload";
+import { PublicError } from "./public-error";
 
 export const PROJECT_ID_PATTERN = /^job-[a-f0-9-]{36}$/;
 export const ALLOWED_MEDIA_EXTENSIONS = new Set(["mp4", "mov", "webm", "mp3", "m4a", "wav"]);
@@ -43,12 +44,12 @@ export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
 };
 
 function assertOwnerId(ownerId: string) {
-  if (!/^[a-zA-Z0-9_-]+$/.test(ownerId)) throw new Error("The project owner identifier is invalid.");
+  if (!/^[a-zA-Z0-9_-]+$/.test(ownerId)) throw new PublicError("The project owner identifier is invalid.", 400);
 }
 
 function projectKey(ownerId: string, projectId: string) {
   assertOwnerId(ownerId);
-  if (!PROJECT_ID_PATTERN.test(projectId)) throw new Error("The project identifier is invalid.");
+  if (!PROJECT_ID_PATTERN.test(projectId)) throw new PublicError("The project identifier is invalid.", 400);
   return `owners/${ownerId}/projects/${projectId}.json`;
 }
 
@@ -63,19 +64,19 @@ function titleFromFile(fileName: string) {
 function validateMedia(fileName: string, fileType: string, fileSize: number, totalParts: number) {
   const extension = fileName.split(".").pop()?.toLowerCase() || "";
   if (!ALLOWED_MEDIA_EXTENSIONS.has(extension)) {
-    throw new Error("Choose an MP4, MOV, WebM, MP3, M4A, or WAV file.");
+    throw new PublicError("Choose an MP4, MOV, WebM, MP3, M4A, or WAV file.", 400);
   }
   if (fileType && !ALLOWED_MEDIA_TYPES.has(fileType.toLowerCase())) {
-    throw new Error("This file's media type is not supported.");
+    throw new PublicError("This file's media type is not supported.", 400);
   }
   if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > MAX_UPLOAD_BYTES) {
-    throw new Error("The source file must be larger than 0 bytes and no more than 2 GB.");
+    throw new PublicError("The source file must be larger than 0 bytes and no more than 2 GB.", 400);
   }
   if (!Number.isSafeInteger(totalParts) || totalParts <= 0 || totalParts > MAX_UPLOAD_PARTS) {
-    throw new Error("The upload section count is invalid.");
+    throw new PublicError("The upload section count is invalid.", 400);
   }
   if (totalParts !== Math.ceil(fileSize / UPLOAD_PART_BYTES)) {
-    throw new Error("The upload section count does not match the source file size.");
+    throw new PublicError("The upload section count does not match the source file size.", 400);
   }
 }
 
@@ -120,7 +121,7 @@ export async function getProject(ownerId: string, projectId: string) {
 
 export async function requireProject(ownerId: string, projectId: string) {
   const project = await getProject(ownerId, projectId);
-  if (!project) throw new Error("This project could not be found.");
+  if (!project) throw new PublicError("This project could not be found.", 404);
   return project;
 }
 
@@ -192,9 +193,9 @@ export async function deleteProject(ownerId: string, projectId: string) {
 }
 
 export function projectSourcePartKey(projectId: string, partIndex: number) {
-  if (!PROJECT_ID_PATTERN.test(projectId)) throw new Error("The project identifier is invalid.");
+  if (!PROJECT_ID_PATTERN.test(projectId)) throw new PublicError("The project identifier is invalid.", 400);
   if (!Number.isSafeInteger(partIndex) || partIndex < 0 || partIndex >= MAX_UPLOAD_PARTS) {
-    throw new Error("The upload section number is invalid.");
+    throw new PublicError("The upload section number is invalid.", 400);
   }
   return jobKey(projectId, `source/part-${String(partIndex).padStart(4, "0")}`);
 }
@@ -211,5 +212,5 @@ export function validateMediaSignature(bytes: Uint8Array, fileName: string) {
       : extension === "mp3" ? isMp3
         : extension === "mp4" || extension === "mov" || extension === "m4a" ? isIsoMedia
           : false;
-  if (!valid) throw new Error("The file contents do not match the selected media type.");
+  if (!valid) throw new PublicError("The file contents do not match the selected media type.", 400);
 }

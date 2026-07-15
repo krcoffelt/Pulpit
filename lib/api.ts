@@ -2,14 +2,12 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { isAuthenticationError } from "./auth";
 import { logEvent } from "./log";
+import { PublicError } from "./public-error";
 
-export class ApiStatusError extends Error {
-  status: number;
-
+export class ApiStatusError extends PublicError {
   constructor(message: string, status: number) {
-    super(message);
+    super(message, status);
     this.name = "ApiStatusError";
-    this.status = status;
   }
 }
 
@@ -26,9 +24,12 @@ export function requireTrustedMutation(request: Request) {
 }
 
 export function apiError(error: unknown, requestId: string, fallback: string, validation = false) {
-  const message = error instanceof Error ? error.message : fallback;
-  const explicitStatus = error && typeof error === "object" && "status" in error && typeof error.status === "number" ? error.status : undefined;
+  const rawMessage = error instanceof Error ? error.message : fallback;
+  const explicitStatus = error instanceof PublicError
+    ? error.status
+    : error && typeof error === "object" && "status" in error && typeof error.status === "number" ? error.status : undefined;
   const status = isAuthenticationError(error) ? error.status : explicitStatus || (validation ? 400 : 500);
+  const message = status >= 500 && !(error instanceof PublicError) ? fallback : rawMessage;
   if (status >= 500) logEvent("error", "api.request_failed", { requestId, status }, error);
   else if (status >= 400) logEvent("warn", "api.request_rejected", { requestId, status, reason: message.slice(0, 200) });
   const retryAfter = error && typeof error === "object" && "retryAfter" in error && typeof error.retryAfter === "number" ? error.retryAfter : undefined;

@@ -4,6 +4,7 @@ import { apiError, createRequestId, requireTrustedMutation } from "@/lib/api";
 import { requireCircumvisionUser } from "@/lib/auth";
 import { deleteProject, requireProject, saveProject } from "@/lib/projects";
 import type { CircumvisionProject } from "@/lib/types";
+import { PublicError } from "@/lib/public-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,11 +78,11 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (input.editor) {
       for (const clip of input.editor.clips) {
         if (clip.end <= clip.start || project.duration && clip.end > project.duration + 0.5) {
-          throw new Error("A clip has invalid start or end timing.");
+          throw new PublicError("A clip has invalid start or end timing.", 400);
         }
       }
       for (const segment of input.editor.transcript) {
-        if (segment.end <= segment.start) throw new Error("A transcript segment has invalid timing.");
+        if (segment.end <= segment.start) throw new PublicError("A transcript segment has invalid timing.", 400);
       }
       project.editor = input.editor as CircumvisionProject["editor"];
     }

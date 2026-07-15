@@ -6,6 +6,7 @@ import { projectSourcePartKey, recordUploadedPart, requireProject, validateMedia
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { putJobBytes } from "@/lib/job-storage";
 import { MAX_UPLOAD_PARTS, UPLOAD_PART_BYTES } from "@/lib/upload";
+import { PublicError } from "@/lib/public-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
       chunkIndex: request.headers.get("x-chunk-index"),
       totalChunks: request.headers.get("x-total-chunks"),
     });
-    if (input.chunkIndex >= input.totalChunks) throw new Error("The upload section number is invalid.");
+    if (input.chunkIndex >= input.totalChunks) throw new PublicError("The upload section number is invalid.", 400);
 
     const project = await requireProject(user.id, input.projectId);
     if (project.status === "cancelled") {

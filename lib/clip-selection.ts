@@ -88,7 +88,7 @@ export async function findBestClips(segments: TranscriptSegment[], openai: OpenA
   if (!segments.length) return [];
   const transcript = segments.map((segment) => `[${segment.start.toFixed(1)}-${segment.end.toFixed(1)}] ${segment.text}`).join("\n");
   const response = await openai.responses.create({
-    model: process.env.OPENAI_ANALYSIS_MODEL || "gpt-5.6-luna",
+    model: process.env.OPENAI_ANALYSIS_MODEL || "gpt-5",
     reasoning: { effort: "low" },
     input: [
       { role: "system", content: `You are a senior short-form video editor specializing in sermons. Find emotionally complete, faithful moments with an immediate spoken hook, enough context to stand alone, and a satisfying landing. Never invent, paraphrase, rearrange, or clean up sermon language. Never invent timestamps. Return diverse moments from different parts of the sermon. Reject fragments, setup without payoff, repeated ideas, and heavily overlapping selections. Target ${targetDuration} seconds per clip and never exceed 60 seconds. Score each candidate independently for hook strength, emotional impact, clarity, completeness, faithfulness to the sermon, and social shareability.` },
