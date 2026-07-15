@@ -1,4 +1,5 @@
 import { getUser } from "@netlify/identity";
+import { isNetlifyRuntime } from "./runtime";
 
 export interface CircumvisionUser {
   id: string;
@@ -22,12 +23,6 @@ export class AuthenticationError extends Error {
     super(message);
     this.name = "AuthenticationError";
   }
-}
-
-function isNetlifyRuntime() {
-  return process.env.NETLIFY === "true"
-    || Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
-    || typeof globalThis.netlifyBlobsContext === "string";
 }
 
 export async function getCircumvisionSession(): Promise<CircumvisionSession> {

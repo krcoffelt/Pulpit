@@ -1,3 +1,5 @@
+import { isNetlifyRuntime } from "./runtime";
+
 type WorkerKind = "process" | "render";
 
 export async function dispatchBackgroundJob(
@@ -23,11 +25,13 @@ export async function dispatchBackgroundJob(
     return "external" as const;
   }
 
-  if (process.env.NETLIFY === "true") {
-    const response = await fetch(new URL(`/.netlify/functions/${kind}-background`, request.url), {
+  if (isNetlifyRuntime()) {
+    const siteUrl = process.env.URL || process.env.DEPLOY_PRIME_URL || request.url;
+    const response = await fetch(new URL(`/.netlify/functions/${kind}-background`, siteUrl), {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Circumvision-Request-Id": requestId },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error(`The Netlify background ${kind === "process" ? "processor" : "renderer"} could not be started (HTTP ${response.status}).`);
     return "netlify" as const;
