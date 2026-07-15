@@ -5,16 +5,16 @@
 1. Link the repository `krcoffelt/Pulpit` to the production site.
 2. In **Project configuration → Identity**, enable Netlify Identity.
 3. Set registration to **Invite only**. Do not enable open signup.
-4. Invite Tyshone Roland's email, then use the invite link to set the initial password.
+4. Invite Tyshone Roland's email, then open the invitation link to activate passwordless access.
 5. Add `OPENAI_API_KEY` as a secret environment variable for the Production deploy context.
 6. Set `NEXT_PUBLIC_APP_URL=https://circumvision.netlify.app` (or the final custom domain).
 7. Keep the model defaults from `.env.example` unless a tested migration deliberately changes them.
 
-The application denies project, media, processing, and export access unless the Netlify Identity JWT belongs to the project owner. Local development intentionally uses one isolated `local-user` account.
+The application denies project, media, processing, and export access unless the request includes a valid Netlify Identity JWT. Local development intentionally uses one isolated `local-user` account.
 
 Circumvision uses one authorization rule: a valid Netlify Identity session can access the workspace. Keep Netlify Identity registration set to **Invite only** so accounts can only be created from invitations. The application does not duplicate Netlify's invitation state or require separate app roles.
 
-Invitation links open Circumvision's built-in password-creation screen. The sign-in screen also includes password recovery; recovery links open an authenticated new-password form before entering the workspace. Users should never share their password with an operator or support agent.
+Circumvision is passwordless for users. Invitation links silently create a strong managed credential, and the sign-in screen emails a one-time recovery link that rotates that credential before entering the workspace. Users never create, remember, or share a password.
 
 ## Media architecture
 
