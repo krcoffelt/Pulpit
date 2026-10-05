@@ -1,21 +1,13 @@
 import { expect, test } from "@playwright/test";
 
-test.beforeEach(async ({ request, context }) => {
-  const email = "browser-tests@circumvision.test";
-  expect((await request.post("/api/session", { data: { email } })).status()).toBe(200);
-  expect((await context.request.post("/api/session", { data: { email } })).status()).toBe(200);
-});
-
-test("any email opens the workspace immediately and remains signed in", async ({ page }) => {
+test("opens immediately without login or cookies", async ({ page }) => {
   await page.context().clearCookies();
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Enter your email. That's it." })).toBeVisible();
-  await page.getByLabel("Email").fill("Anybody@Example.com");
-  await page.getByRole("button", { name: "Enter Circumvision" }).click();
   await expect(page.getByText("Trim the sermon.").or(page.getByRole("heading", { name: "Projects" }))).toBeVisible();
+  await expect(page.getByLabel("Email", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Switch email" })).toHaveCount(0);
   await page.reload();
   await expect(page.getByText("Trim the sermon.").or(page.getByRole("heading", { name: "Projects" }))).toBeVisible();
-  await expect(page.getByRole("button", { name: "Enter Circumvision" })).toHaveCount(0);
 });
 
 test("creates, resumes, and deletes a sectioned project through protected APIs", async ({ request }) => {

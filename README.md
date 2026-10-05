@@ -6,7 +6,7 @@ AI clip selection uses GPT-6 Luna for first-pass candidates and GPT-6.1 Sol for 
 
 ## Production workflow
 
-- Email-only entry with a one-year remembered browser session and one shared workspace
+- Immediate access with no login, email, or account required in one shared workspace
 - MP4, MOV, WebM, MP3, M4A, and WAV ingest up to 2 GB
 - Retriable 3 MB section uploads with exact progress, pause, resume, and validation
 - Durable project, source, transcript, edit, job, and export persistence
@@ -19,7 +19,7 @@ AI clip selection uses GPT-6 Luna for first-pass candidates and GPT-6.1 Sol for 
 - Manual framing plus crop-fill or blurred full-frame output
 - Editable caption style, size, position, highlight, and enable/disable controls
 - H.264/AAC exports for 9:16 (1080×1920), 4:5 (1080×1350), and 1:1 (1080×1080)
-- Session-gated range downloads that stay within serverless response limits
+- Range downloads that stay within serverless response limits
 - Project dashboard, autosave, return-later workflow, quota/rate limits, cancellation, cleanup, health checks, and structured logs
 
 ## Local development
@@ -32,7 +32,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Add `OPENAI_API_KEY` to `.env.local`, then open [http://localhost:3000](http://localhost:3000). Enter any valid email to open the shared workspace; no message is sent and no password is required. The browser remembers the session for one year. The sample sermon opens the editor without invoking AI.
+Add `OPENAI_API_KEY` to `.env.local`, then open [http://localhost:3000](http://localhost:3000). The shared workspace opens immediately with no login or email required. The sample sermon opens the editor without invoking AI.
 
 ## Commands
 
@@ -49,6 +49,6 @@ The render integration test produces and probes real H.264/AAC output for all ra
 
 ## Production
 
-Deployment uses Next.js on Netlify, Netlify Blobs, a lightweight email-entry cookie, and token-protected background functions. Source media is retained so rerenders never require another upload. Preview deploys use isolated Blob stores.
+Deployment uses Next.js on Netlify, Netlify Blobs, an open shared workspace, and token-protected background functions. Source media is retained so rerenders never require another upload. Preview deploys use isolated Blob stores.
 
 See [PRODUCTION.md](./PRODUCTION.md) for environment variables, architecture, cleanup, security notes, and the release smoke-test checklist.

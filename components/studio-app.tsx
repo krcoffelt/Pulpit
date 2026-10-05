@@ -13,7 +13,6 @@ import {
   Frame,
   Info,
   LoaderCircle,
-  LogOut,
   Maximize2,
   Pause,
   Play,
@@ -256,7 +255,7 @@ function WelcomeView({
       <header className="welcome-nav">
         <BrandMark />
         <div className="welcome-nav-meta">
-          <span className="status-dot"><i /> Local workspace</span>
+          <span className="status-dot"><i /> Shared workspace</span>
           <span className="avatar">TR</span>
         </div>
       </header>
@@ -374,48 +373,6 @@ function AnalyzingView({ fileName, step, progress, activeDetail, onCancel }: { f
   );
 }
 
-function SignInView() {
-  const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const enterWorkspace = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const response = await fetch("/api/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim() }),
-      });
-      const payload = await readApiPayload<{ authenticated: boolean }>(response, "Opening workspace");
-      if (!response.ok || !payload.authenticated) throw new Error(payload.error || "The workspace could not be opened.");
-      window.location.reload();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The workspace could not be opened.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <main className="auth-shell">
-      <header className="welcome-nav"><BrandMark /></header>
-      <section className="auth-panel">
-        <p className="eyebrow"><span>OPEN WORKSPACE</span><i /> ANY EMAIL</p>
-        <h1>Enter your email.<br /><em>That&apos;s it.</em></h1>
-        <p>No password or email link. We&apos;ll remember this device.</p>
-        <form onSubmit={enterWorkspace}>
-          <label><span>Email</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-          {error && <div className="form-error"><Info size={15} /> {error}</div>}
-          <button className="primary-button" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Scissors size={17} />} {busy ? "Opening…" : "Enter Circumvision"}</button>
-        </form>
-      </section>
-    </main>
-  );
-}
-
 function ProjectsView({
   projects,
   loading,
@@ -423,7 +380,6 @@ function ProjectsView({
   onOpen,
   onDelete,
   onRefresh,
-  onLogout,
 }: {
   projects: ProjectSummary[];
   loading: boolean;
@@ -431,7 +387,6 @@ function ProjectsView({
   onOpen: (project: ProjectSummary) => void;
   onDelete: (project: ProjectSummary) => void;
   onRefresh: () => void;
-  onLogout: () => void;
 }) {
   return (
     <main className="projects-shell">
@@ -440,7 +395,6 @@ function ProjectsView({
         <div className="welcome-nav-meta">
           <span className="status-dot"><i /> Shared workspace</span>
           <button className="icon-button" onClick={onRefresh} aria-label="Refresh projects"><RotateCcw size={17} /></button>
-          <button className="icon-button" onClick={onLogout} aria-label="Switch email"><LogOut size={17} /></button>
           <span className="avatar">TR</span>
         </div>
       </header>
@@ -1104,7 +1058,7 @@ function EditorView({
 
 export function StudioApp() {
   const [mode, setMode] = useState<AppMode>("welcome");
-  const [sessionState, setSessionState] = useState<"loading" | "authenticated" | "unauthenticated">("loading");
+  const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [file, setFile] = useState<File | null>(null);
@@ -1137,27 +1091,17 @@ export function StudioApp() {
     let active = true;
     void (async () => {
       try {
-        const sessionResponse = await fetch("/api/session", { cache: "no-store" });
-        const session = await readApiPayload<{ authenticated: boolean }>(sessionResponse, "Loading session");
-        if (!active) return;
-        if (!session.authenticated) {
-          setSessionState("unauthenticated");
-          setProjectsLoading(false);
-          return;
-        }
         const response = await fetch("/api/projects", { cache: "no-store" });
         const payload = await readApiPayload<{ projects: ProjectSummary[] }>(response, "Loading projects");
         if (!response.ok) throw new Error(payload.error || "Projects could not be loaded.");
         if (!active) return;
         setProjects(payload.projects || []);
         if (payload.projects?.length) setMode("projects");
-        setSessionState("authenticated");
       } catch (caught) {
         if (!active) return;
         setError(caught instanceof Error ? caught.message : "The workspace could not be loaded.");
-        setSessionState("authenticated");
       } finally {
-        if (active) setProjectsLoading(false);
+        if (active) { setProjectsLoading(false); setWorkspaceLoading(false); }
       }
     })();
     return () => { active = false; };
@@ -1418,11 +1362,10 @@ export function StudioApp() {
     await loadProjects();
   };
 
-  if (sessionState === "loading") return <main className="app-loading"><BrandMark /><LoaderCircle className="spin" size={24} /><span>Opening workspace</span></main>;
-  if (sessionState === "unauthenticated") return <SignInView />;
+  if (workspaceLoading) return <main className="app-loading"><BrandMark /><LoaderCircle className="spin" size={24} /><span>Opening workspace</span></main>;
 
   if (mode === "analyzing") return <AnalyzingView fileName={file?.name || title || "Sermon"} step={analysisStep} progress={analysisProgress} activeDetail={analysisDetail} onCancel={() => void cancelProcessing()} />;
-  if (mode === "projects") return <ProjectsView projects={projects} loading={projectsLoading} onNew={newProject} onOpen={(project) => void openProject(project)} onDelete={(project) => void removeProject(project)} onRefresh={() => void loadProjects()} onLogout={() => void fetch("/api/session", { method: "DELETE" }).then(() => window.location.reload())} />;
+  if (mode === "projects") return <ProjectsView projects={projects} loading={projectsLoading} onNew={newProject} onOpen={(project) => void openProject(project)} onDelete={(project) => void removeProject(project)} onRefresh={() => void loadProjects()} />;
   if (mode === "editor" && analysis) return <EditorView analysis={analysis} projectId={projectId} initialEditor={initialEditor} initialExports={projects.find((project) => project.id === projectId)?.exports} videoUrl={videoUrl} onBack={showProjects} onNew={newProject} />;
   return (
     <WelcomeView
