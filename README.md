@@ -2,6 +2,8 @@
 
 Circumvision is Tyshone Roland's sermon-to-short-form production workspace. It keeps the original sermon, creates a speaker-aware transcript, finds strong faithful moments, lets the editor correct copy and framing, and renders downloadable social MP4s.
 
+AI clip selection uses GPT-6 Luna for first-pass candidates and GPT-6.1 Sol for final editorial review against the full transcript. Speaker-aware audio transcription uses GPT-4o Transcribe Diarize; FFmpeg renders the finished videos. Override the text models with `OPENAI_CANDIDATE_MODEL` and `OPENAI_ANALYSIS_MODEL`.
+
 ## Production workflow
 
 - Email-only entry with a one-year remembered browser session and one shared workspace
